@@ -1,0 +1,9 @@
+server 10.2.0.1 5001
+server 10.2.0.2 5001
+server 10.2.1.1 5001
+server 10.2.1.2 5001
+server 10.3.0.1 5001
+server 10.3.0.2 5001
+server 10.3.1.1 5001
+server 10.3.1.2 5001
+req_size_dist TrafficGenerator/conf/DCTCP_CDF.txt

@@ -1,0 +1,4 @@
+captured_packet/
+results/
+__pycache__/
+*.pyc
