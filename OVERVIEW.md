@@ -1,5 +1,32 @@
 # Fat-Tree 네트워크 시뮬레이션 전체 동작 흐름
 
+---
+
+## 사전 준비
+
+### 필수 설치
+```bash
+# Mininet
+sudo apt install -y mininet
+
+# tshark (패킷 캡처)
+sudo apt install -y tshark
+
+# Docker
+sudo apt install -y docker.io
+```
+
+### Ryu 컨트롤러 Docker 이미지 빌드 (최초 1회)
+```bash
+sudo docker build -f ryu_Dockerfile -t ryu-py3 .
+```
+
+### 폴더 권한 설정 (실행 후 pcap/결과 파일 접근 시)
+```bash
+sudo chown -R $USER:$USER captured_packet/
+sudo chown -R $USER:$USER results/
+```
+
 ### 예시 실행
 ```bash
 sudo python3 main.py 5001 20 4
