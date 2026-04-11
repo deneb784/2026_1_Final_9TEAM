@@ -32,4 +32,3 @@ class ModularFatTreeController(app_manager.RyuApp):
         self.connected += 1
         if self.connected == self.total_switches:
             self.logger.info('[*] 전체 스위치 룰 설치 완료 (%d개)', self.total_switches)
-            open('/app/rules_ready', 'w').close()

@@ -44,10 +44,9 @@ main.py
   │
   ├─ 2. fatTreeBuilder(k) → Mininet 네트워크 생성 및 start()
   │
-  ├─ 3. /tmp/rules_ready 파일 생성될 때까지 폴링 대기 (0.5초 간격)
+  ├─ 3. time.sleep(3): 스위치 룰 설치 완료까지 대기
   │       └─ 각 스위치가 Ryu에 연결되면 switch_features_handler 호출
   │           └─ rule_ecmp.install_rules() → ECMP 룰 설치
-  │               └─ 전체 스위치 완료 시 /tmp/rules_ready 생성
   │
   ├─ 4. CapturePoint 생성 (모든 edge 스위치의 host-facing 인터페이스)
   │       └─ 각 인터페이스에 연결된 호스트 IP를 src_ips로 지정
@@ -133,7 +132,6 @@ main.py
         └─ ModularFatTreeController
               └─ switch_features_handler (스위치 연결 시 이벤트)
                     └─ rule_ecmp.install_rules() → ECMP 라우팅 룰
-                          └─ 전체 스위치 완료 시 /tmp/rules_ready 생성
 ```
 
 > **Table-miss 룰 불필요**: `autoStaticArp=True`로 ARP가 Mininet에서 자동 처리되고,
@@ -174,10 +172,6 @@ main.py
 
 > **Priority 역할**: 하나의 패킷이 여러 룰에 매칭될 때 높은 priority가 우선 적용됨.
 > 구체적인 룰(200)이 기본 룰(100)보다 먼저 적용되어 로컬 트래픽이 업링크로 나가지 않도록 함.
-
-### 룰 설치 완료 동기화
-- 모든 스위치 룰 설치 완료 시 `/tmp/rules_ready` 파일 생성
-- `main.py`에서 해당 파일이 생길 때까지 0.5초 간격으로 폴링 후 삭제
 
 ---
 
