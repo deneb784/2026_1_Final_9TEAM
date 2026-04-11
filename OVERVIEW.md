@@ -1,15 +1,9 @@
 # Fat-Tree 네트워크 시뮬레이션 전체 동작 흐름
 
----
-
-## 목차
-1. [전체 흐름 요약](#1-전체-흐름-요약)
-2. [Topology 생성](#2-topology-생성-topobuilderpyfatTreeBuilder)
-3. [Ryu Controller 및 Rule 적용](#3-ryu-controller-및-rule-적용)
-4. [k값에 따른 스위치·호스트 수 공식](#4-k값에-따른-스위치호스트-수-공식)
-5. [k=4 토폴로지 상세 정보](#5-k4-토폴로지-상세-정보)
-6. [트래픽 생성 (flowGenerator)](#6-트래픽-생성-flowgeneratorpy)
-7. [패킷 캡처 (PacketCapturer)](#7-패킷-캡처-packet_captuerpypacketcapturer)
+### 예시 실행
+```bash
+sudo python3 main.py 5001 20 4
+```
 
 ---
 
@@ -162,15 +156,15 @@ main.py
 
 ## 4. k값에 따른 스위치·호스트 수 공식
 
-| 항목 | 공식 | k=4 | k=8 |
-|---|---|---|---|
-| Core 스위치 | `(k/2)²` | 4 | 16 |
-| Aggregation 스위치 | `k × (k/2)` | 8 | 32 |
-| Edge 스위치 | `k × (k/2)` | 8 | 32 |
-| **전체 스위치** | `(k/2)² + k²` | **20** | **80** |
-| Pod 수 | `k` | 4 | 8 |
-| Edge당 호스트 수 | `k/2` | 2 | 4 |
-| **전체 호스트** | `k³ / 4` | **16** | **128** |
+| 항목 | 공식 | k=4 |
+|---|---|---|
+| Core 스위치 | `(k/2)²` | 4 |
+| Aggregation 스위치 | `k × (k/2)` | 8 |
+| Edge 스위치 | `k × (k/2)` | 8 |
+| **전체 스위치** | `(k/2)² + k²` | **20** |
+| Pod 수 | `k` | 4 |
+| Edge당 호스트 수 | `k/2` | 2 |
+| **전체 호스트** | `k³ / 4` | **16** |
 
 ---
 
@@ -371,16 +365,5 @@ captured_packet/
 | `tcp.len` | TCP payload 크기 (bytes) |
 | `tcp.flags` | TCP 플래그 (SYN, ACK 등) |
 
-### pcap 분석 명령어
-```bash
-# 텍스트로 보기
-tshark -r captured_packet/edge_p0_e0-eth1.pcap
-
-# 특정 IP 필터링
-tshark -r captured_packet/edge_p0_e0-eth1.pcap -Y "ip.dst == 10.2.0.1"
-
-# CSV로 추출
-tshark -r captured_packet/edge_p0_e0-eth1.pcap -T fields \
-  -e frame.time_epoch -e ip.src -e ip.dst \
-  -e tcp.srcport -e tcp.dstport -e frame.len > output.csv
-```
+### pcap 파일 예시 (Wireshark로 조회)
+<img width="1536" height="674" alt="image" src="https://github.com/user-attachments/assets/22632fb7-f27c-49d3-b016-95a5ea8fbf5d" />
