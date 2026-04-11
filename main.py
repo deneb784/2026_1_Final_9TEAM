@@ -19,6 +19,18 @@ from packet_captuer import CapturePoint, PacketCapturer
     sudo python3 main.py 5001 100 4
 """
 
+
+def disable_interface_offloads(network):
+    """패킷 캡처 왜곡을 줄이기 위해 Mininet 인터페이스의 offload를 끈다."""
+    for node in list(network.hosts) + list(network.switches):
+        for intf in node.intfList():
+            if not intf.name or intf.name == 'lo':
+                continue
+            node.cmd(
+                'ethtool -K %s gro off gso off tso off rx off tx off >/dev/null 2>&1 || true'
+                % intf.name
+            )
+
 if __name__ == '__main__':
 
     if len(sys.argv) < 3:
@@ -49,6 +61,8 @@ if __name__ == '__main__':
         print('[*] Fat-tree 토폴로지 생성 중... (k=%d)' % k)
         network = fatTreeBuilder(k=k)
         network.start()
+        disable_interface_offloads(network)
+        print('[*] 인터페이스 offload 비활성화 완료')
         print('[*] 토폴로지 생성 완료 (스위치 %d개, 호스트 %d개)' % (
             len(network.switches), len(network.hosts)))
 
