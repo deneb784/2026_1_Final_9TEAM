@@ -103,7 +103,7 @@ def startSrc(srcHost, flowsPerPair, srcIndex):
     print('start flows from ' + srcHost.name)
     print(srcHost.name + ' flow generate ' + time.strftime('%Y.%m.%d - %H:%M:%S'))
     command = (
-        'TrafficGenerator/bin/client -b 900 '
+        'TrafficGenerator/bin/client -b 80 '
         '-c TrafficGenerator/conf/src%s_config.txt '
         '-n %s -l results/flows_%s.txt -s 1 -v'
         % (srcIndex, flowsPerPair, srcIndex)
