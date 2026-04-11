@@ -117,8 +117,8 @@ main.py
 | 구간 | 대역폭 |
 |---|---|
 | Host ↔ Edge | 100 Mbps |
-| Edge ↔ Agg | 10 Mbps |
-| Agg ↔ Core | 10 Mbps |
+| Edge ↔ Agg | 100 Mbps |
+| Agg ↔ Core | 100 Mbps |
 
 ---
 
