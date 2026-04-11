@@ -2,7 +2,7 @@
    https://github.com/HKUST-SING/TrafficGenerator """
 
 import os, time
-import multiprocessing
+import subprocess
 
 from mininet.cli import CLI
 
@@ -72,15 +72,17 @@ def flowGenerator(network, port, flowsPerPair):
 
     print('src host count:', len(srcHosts))
 
-    # 각 src를 별도 프로세스로 실행하여 병렬 트래픽 생성
+    # Mininet Host 객체를 multiprocessing 자식 프로세스로 넘기지 않고,
+    # 각 host shell에서 직접 client를 병렬 실행한다.
     processes = []
-    for srcIndex in range(len(srcHosts)):
-        p = multiprocessing.Process(target=startSrc, args=(srcHosts, flowsPerPair, srcIndex))
-        p.start()
-        processes.append(p)
+    for srcIndex, srcHost in enumerate(srcHosts):
+        process = startSrc(srcHost, flowsPerPair, srcIndex)
+        processes.append((srcIndex, srcHost, process))
 
-    for process in processes:
-        process.join()
+    for srcIndex, srcHost, process in processes:
+        return_code = process.wait()
+        if return_code != 0:
+            print('[!] %s client 종료 코드: %s' % (srcHost.name, return_code))
 
     print('src requests done...')
 
@@ -94,15 +96,26 @@ def startDst(dstHosts, port):
         dst.cmd('TrafficGenerator/bin/server -p %s &' % port)
 
 
-def startSrc(srcHosts, flowsPerPair, srcIndex):
+def startSrc(srcHost, flowsPerPair, srcIndex):
     """
     특정 src 호스트에서 TrafficGenerator 클라이언트를 실행하여 트래픽을 생성.
     """
-    print('start flows from ' + srcHosts[srcIndex].name)
-    print(srcHosts[srcIndex].name + ' flow generate ' + time.strftime('%Y.%m.%d - %H:%M:%S'))
-    srcHosts[srcIndex].cmd(
-        'TrafficGenerator/bin/client -b 900 -c TrafficGenerator/conf/src%s_config.txt -n %s -l results/flows_%s.txt -s 1 -v > results/log_%s.txt'
-        % (srcIndex, flowsPerPair, srcIndex, srcIndex)
+    print('start flows from ' + srcHost.name)
+    print(srcHost.name + ' flow generate ' + time.strftime('%Y.%m.%d - %H:%M:%S'))
+    command = (
+        'TrafficGenerator/bin/client -b 900 '
+        '-c TrafficGenerator/conf/src%s_config.txt '
+        '-n %s -l results/flows_%s.txt -s 1 -v'
+        % (srcIndex, flowsPerPair, srcIndex)
     )
-
+    log_path = 'results/log_%s.txt' % srcIndex
+    log_file = open(log_path, 'w')
+    process = srcHost.popen(
+        command,
+        shell=True,
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
+    )
+    process._log_file = log_file
+    return process
 
