@@ -10,13 +10,12 @@ from packet_captuer import CapturePoint, PacketCapturer
     sudo python3 main.py <port> <flowsPerPair> [k]
 
 인수:
-    port         : 트래픽에 사용할 TCP 포트 번호
     flowsPerPair : src-dst 쌍 당 생성할 플로우 수
     k            : fat-tree 파라미터 (기본값 4)
 
 예시:
-    sudo python3 main.py 5001 100
-    sudo python3 main.py 5001 100 4
+    sudo python3 main.py 100
+    sudo python3 main.py 100 4
 """
 
 
@@ -33,13 +32,13 @@ def disable_interface_offloads(network):
 
 if __name__ == '__main__':
 
-    if len(sys.argv) < 3:
-        print('Usage: sudo python3 %s <port> <flowsPerPair> [k]' % sys.argv[0])
+    if len(sys.argv) < 2:
+        print('Usage: sudo python3 %s <flowsPerPair>' % sys.argv[0])
         sys.exit(1)
 
-    port         = int(sys.argv[1])
-    flowsPerPair = int(sys.argv[2])
-    k            = int(sys.argv[3]) if len(sys.argv) > 3 else 4
+    flowsPerPair = int(sys.argv[1])
+    k       = 4    # fat-tree 파라미터 고정
+    DST_PORT = 5001 # 트래픽을 받는 HOST 포트 번호 5001로 고정
 
     setLogLevel('info')
 
@@ -89,14 +88,14 @@ if __name__ == '__main__':
         capturer = PacketCapturer(
             capture_points=capture_points,
             output_dir='captured_packet',
-            server_port=port,
+            server_port=DST_PORT,
         )
         capturer.start()
         print('[*] 패킷 캡처 시작 (저장 위치: captured_packet/)')
 
         # 트래픽 생성 (pod0,1=src → pod2,3=dst)
         print('[*] 트래픽 생성 시작...')
-        flowGenerator(network, port, flowsPerPair)
+        flowGenerator(network, DST_PORT, flowsPerPair)
 
         time.sleep(1)
 

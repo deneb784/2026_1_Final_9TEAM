@@ -21,10 +21,10 @@ class PacketCapturer:
     def __init__(
         self,
         capture_points: list[CapturePoint],
+        server_port: int,
         output_dir: str = "captured_packet",
-        server_port: int | None = None,
     ):
-        """캡처 지점 목록, 저장 디렉터리, 필터링할 포트를 초기화한다."""
+        """캡처 지점 목록, 저장 디렉터리를 초기화한다."""
         self.capture_points = capture_points
         self.output_dir = output_dir
         self.server_port = server_port
@@ -36,9 +36,7 @@ class PacketCapturer:
         for cp in self.capture_points:
             output_file = os.path.join(self.output_dir, "%s.pcap" % cp.interface)
 
-            filters = []
-            if self.server_port is not None:
-                filters.append("tcp and port %d" % self.server_port)
+            filters = ["tcp and port %d" % self.server_port] # tcp 패킷과 포트 번호가 5001인 것만 (받는 쪽 포트 5001 : TrafficGenerator로 생성한 트래픽)
             if cp.src_ips:
                 ip_filter = " or ".join("src host %s" % ip for ip in cp.src_ips)
                 filters.append("(%s)" % ip_filter)
@@ -55,7 +53,7 @@ class PacketCapturer:
             self.processes.append(process)
 
     def stop(self) -> None:
-        """모든 tshark subprocess를 안전하게 종료하고 src IP 기준으로 후처리 필터링한다."""
+        """모든 tshark subprocess를 안전하게 종료한다."""
         for process in self.processes:
             if process.poll() is not None:
                 continue
@@ -64,18 +62,3 @@ class PacketCapturer:
                 process.wait(timeout=2.0)
             except subprocess.TimeoutExpired:
                 process.kill()
-
-        for cp in self.capture_points:
-            if not cp.src_ips:
-                continue
-            pcap_file = os.path.join(self.output_dir, "%s.pcap" % cp.interface)
-            if not os.path.exists(pcap_file):
-                continue
-            ip_filter = " or ".join("ip.src == %s" % ip for ip in cp.src_ips)
-            tmp_file = pcap_file + ".tmp"
-            subprocess.run(
-                ["tshark", "-r", pcap_file, "-Y", ip_filter, "-w", tmp_file],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            os.replace(tmp_file, pcap_file)
