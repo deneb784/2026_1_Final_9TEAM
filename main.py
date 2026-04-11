@@ -54,9 +54,10 @@ if __name__ == '__main__':
 
         # 스위치들이 Ryu에 연결되고 룰이 설치될 때까지 대기
         print('[*] 스위치 룰 설치 대기 중...')
-        while not os.path.exists('/tmp/rules_ready'):
+        rules_ready_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'rules_ready')
+        while not os.path.exists(rules_ready_path):
             time.sleep(0.5)
-        os.remove('/tmp/rules_ready')
+        os.remove(rules_ready_path)
         print('[*] 룰 설치 완료 확인')
 
         # 모든 edge 스위치에 캡처 지점 생성 (host-facing 인터페이스)
