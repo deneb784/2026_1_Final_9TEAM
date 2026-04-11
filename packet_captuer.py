@@ -21,13 +21,11 @@ class PacketCapturer:
     def __init__(
         self,
         capture_points: list[CapturePoint],
-        server_port: int,
         output_dir: str = "captured_packet",
     ):
         """캡처 지점 목록, 저장 디렉터리를 초기화한다."""
         self.capture_points = capture_points
         self.output_dir = output_dir
-        self.server_port = server_port
         self.processes: list[subprocess.Popen] = []
 
     def start(self) -> None:
@@ -36,7 +34,7 @@ class PacketCapturer:
         for cp in self.capture_points:
             output_file = os.path.join(self.output_dir, "%s.pcap" % cp.interface)
 
-            filters = ["tcp and port %d" % self.server_port] # tcp 패킷과 포트 번호가 5001인 것만 (받는 쪽 포트 5001 : TrafficGenerator로 생성한 트래픽)
+            filters = ["tcp"]
             if cp.src_ips:
                 ip_filter = " or ".join("src host %s" % ip for ip in cp.src_ips)
                 filters.append("(%s)" % ip_filter)

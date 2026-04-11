@@ -7,15 +7,13 @@ from packet_captuer import CapturePoint, PacketCapturer
 
 """
 실행 방법:
-    sudo python3 main.py <port> <flowsPerPair> [k]
+    sudo python3 main.py <flowsPerPair>
 
 인수:
     flowsPerPair : src-dst 쌍 당 생성할 플로우 수
-    k            : fat-tree 파라미터 (기본값 4)
 
 예시:
     sudo python3 main.py 100
-    sudo python3 main.py 100 4
 """
 
 
@@ -88,7 +86,6 @@ if __name__ == '__main__':
         capturer = PacketCapturer(
             capture_points=capture_points,
             output_dir='captured_packet',
-            server_port=DST_PORT,
         )
         capturer.start()
         print('[*] 패킷 캡처 시작 (저장 위치: captured_packet/)')

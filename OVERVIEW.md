@@ -27,9 +27,9 @@ sudo chown -R $USER:$USER captured_packet/
 sudo chown -R $USER:$USER results/
 ```
 
-### 예시 실행
+### 예시 실행 (필요 인자 : 플로우 수) 
 ```bash
-sudo python3 main.py 5001 20 4
+sudo python3 main.py 20
 ```
 
 ---
@@ -58,7 +58,7 @@ main.py
   │       ├─ ping 테스트로 라우팅 정상 확인
   │       └─ src 호스트 (pod0,1): client 병렬 실행 → 모든 dst로 TCP 플로우 전송
   │
-  ├─ 7. PacketCapturer.stop() → tshark 종료 후 src IP 기준 후처리 필터링
+  ├─ 7. PacketCapturer.stop() → tshark 종료
   │       └─ captured_packet/{interface}.pcap 저장 완료
   │
   └─ 8. 결과 분석 (TrafficGenerator/src/script/result.py)
@@ -68,10 +68,7 @@ main.py
 
 ## 2. Topology 생성 (`topoBuilder.py` / `fatTreeBuilder`)
 
-### Input
-| 파라미터 | 타입 | 설명 |
-|---|---|---|
-| `k` | `int` | Fat-Tree 파라미터 (기본값 4, 짝수) |
+k = 4 고정
 
 ### Output
 | 반환값 | 타입 | 설명 |
@@ -134,15 +131,9 @@ main.py
                     └─ rule_ecmp.install_rules() → ECMP 라우팅 룰
 ```
 
-> **Table-miss 룰 불필요**: `autoStaticArp=True`로 ARP가 Mininet에서 자동 처리되고,
-> ECMP 룰이 모든 IP 트래픽을 커버하므로 매칭되지 않는 패킷이 발생하지 않음
-
 ### `rule_ecmp.install_rules(datapath, logger, k)`
 
-| | 내용 |
-|---|---|
-| **Input** | `datapath` (연결된 스위치), `logger`, `k` (Fat-Tree 파라미터) |
-| **Output** | DPID 범위로 스위치 타입 판별 후 OpenFlow 룰 설치 |
+DPID 범위로 스위치 타입 판별 후 OpenFlow 룰 설치 |
 
 ### DPID로 스위치 타입 판별
 | 스위치 타입 | DPID 범위 |
@@ -262,7 +253,7 @@ main.py
 | 파라미터 | 타입 | 설명 |
 |---|---|---|
 | `network` | `Mininet` | Mininet 네트워크 객체 |
-| `port` | `int` | TCP 포트 번호 |
+| `port` | `int` | TCP 포트 번호 (dst쪽 포트 번호) |
 | `flowsPerPair` | `int` | src-dst 쌍 당 전송할 플로우 수 |
 
 ### Output
@@ -299,15 +290,14 @@ req_size_dist TrafficGenerator/conf/DCTCP_CDF.txt
 **⑤ src 호스트: client 병렬 실행**
 ```
 TrafficGenerator/bin/client
-  -b 900                          # 목표 대역폭 (Mbps)
+  -b 80                           # 목표 대역폭 (Mbps)
   -c conf/src{N}_config.txt       # 설정 파일
   -n {flowsPerPair}               # 전송할 플로우 수
   -l results/flows_{N}.txt        # 결과 저장 파일
   -s 1                            # 랜덤 시드
   -v                              # verbose
 ```
-- 모든 src 호스트가 `multiprocessing.Process`로 동시에 실행
-- `process.join()`으로 모든 src 완료 대기
+- subprocess 사용
 
 ### 트래픽 패턴
 - **DCTCP_CDF.txt**: 데이터센터 트래픽 패턴 (DCTCP 논문 기반 CDF)
@@ -322,46 +312,28 @@ TrafficGenerator/bin/client
 |---|---|---|
 | `node` | Mininet node | 캡처를 실행할 노드 (edge 스위치) |
 | `interface` | `str` | 캡처할 인터페이스 이름 (예: `edge_p0_e0-eth1`) |
-| `src_ips` | `tuple[str, ...]` | 캡처할 src IP 목록 (후처리 필터링에 사용) |
+| `src_ips` | `tuple[str, ...]` | host→switch 방향 필터링에 사용할 host IP |
 
 ### `PacketCapturer.__init__`
 | Input | 타입 | 설명 |
 |---|---|---|
 | `capture_points` | `list[CapturePoint]` | 캡처 지점 목록 |
 | `output_dir` | `str` | pcap 파일 저장 디렉터리 (기본값: `captured_packet`) |
-| `server_port` | `int \| None` | BPF 필터에 사용할 포트 번호 (None이면 전체 트래픽) |
 
 ### `PacketCapturer.start()`
-| | 내용 |
-|---|---|
-| **Input** | 없음 |
-| **Output** | 각 캡처 지점마다 tshark subprocess 실행, pcap 파일 생성 시작 |
-
 **실행되는 tshark 명령**
 ```bash
 tshark -i {interface} -w {output_dir}/{interface}.pcap \
-  -f "tcp and port {server_port}"
+  -f "tcp and (src host {host_ip})"
 ```
-> BPF의 `src host` 필터는 OVS 인터페이스에서 동작하지 않을 수 있으므로,
-> src IP 필터링은 `stop()` 시점의 후처리로 수행
+- `tcp`: TrafficGenerator는 TCP만 사용, ICMP(ping) 등 제외
+- `src host {host_ip}`: host→switch 방향 패킷만 캡처
 
 ### `PacketCapturer.stop()`
-| | 내용 |
-|---|---|
-| **Input** | 없음 |
-| **Output** | tshark 종료 후 src IP 기준 후처리 필터링, pcap 덮어쓰기 |
-
-**후처리 필터링 과정**
-```
-① tshark subprocess SIGINT 전송 → 2초 대기 → 미종료 시 kill
-② 각 pcap 파일에 대해:
-   tshark -r {pcap} -Y "ip.src == {host_ip}" -w {pcap}.tmp
-③ tmp 파일로 원본 덮어쓰기
-```
+- tshark subprocess에 SIGINT 전송 → 2초 대기 → 미종료 시 kill
 
 ### 캡처 지점 구성 (k=4 기준)
 - 대상: 모든 edge 스위치의 host-facing 인터페이스 (`eth1`, `eth2`)
-- 각 인터페이스에 연결된 호스트 IP를 `src_ips`로 지정
 - 총 캡처 지점: 8 스위치 × 2 인터페이스 = **16개**
 
 ### 생성되는 pcap 파일 (k=4)
@@ -375,16 +347,44 @@ captured_packet/
 └── edge_p3_e1-eth2.pcap   # h16 (10.3.1.2) 송신 패킷 (총 16개)
 ```
 
-### pcap 파일에 포함된 정보
+---
+
+## 8. CSV 변환 (`analyze/pcap_to_csv.py`)
+
+16개 pcap 파일을 하나의 CSV로 통합한다.
+
+```bash
+python3 analyze/pcap_to_csv.py
+# 출력: csv_results/packets.csv
+```
+
+### CSV 필드
+
 | 필드 | 설명 |
 |---|---|
-| `frame.time_epoch` | 캡처 타임스탬프 |
-| `eth.src / eth.dst` | MAC 주소 |
-| `ip.src / ip.dst` | IP 주소 |
-| `tcp.srcport / tcp.dstport` | TCP 포트 |
-| `frame.len` | 전체 프레임 크기 (bytes) |
-| `tcp.len` | TCP payload 크기 (bytes) |
-| `tcp.flags` | TCP 플래그 (SYN, ACK 등) |
+| `source_file` | 원본 pcap 파일명 (예: `edge_p0_e0-eth1.pcap`) |
+| `frame.number` | pcap 파일 내 패킷 번호 |
+| `frame.time_epoch` | 캡처 타임스탬프 (Unix epoch) |
+| `frame.len` | 패킷 전체 크기 (bytes) |
+| `ip.src` | 출발지 IP |
+| `ip.dst` | 목적지 IP |
+| `ip.len` | IP 페이로드 크기 (bytes) |
+| `ip.ttl` | TTL |
+| `tcp.srcport` | 출발지 포트 |
+| `tcp.dstport` | 목적지 포트 |
+| `tcp.stream` | TCP 스트림 ID (pcap 파일 단위로 부여) |
+| `tcp.len` | TCP 페이로드 크기 (bytes) |
+| `tcp.seq` | 시퀀스 번호 |
+| `tcp.ack` | ACK 번호 |
+| `tcp.flags` | TCP 플래그 (SYN/ACK/FIN 등) |
+| `tcp.window_size` | 윈도우 크기 |
+| `tcp.time_relative` | 스트림 내 상대 시간 (초) |
+| `tcp.time_delta` | 이전 패킷과의 시간 차 (초) |
+| `tcp.analysis.retransmission` | 재전송 여부 |
+| `tcp.analysis.out_of_order` | 순서 어긋남 여부 |
+| `tcp.analysis.duplicate_ack` | 중복 ACK 여부 |
+| `tcp.analysis.fast_retransmission` | 빠른 재전송 여부 |
 
-### pcap 파일 예시 (Wireshark로 조회)
-<img width="1536" height="674" alt="image" src="https://github.com/user-attachments/assets/22632fb7-f27c-49d3-b016-95a5ea8fbf5d" />
+### 고유 Flow 식별
+`tcp.stream`은 pcap 파일 단위로 0부터 부여되므로 파일이 다르면 번호가 겹칠 수 있다.
+고유한 flow를 식별하려면 `source_file` + `tcp.stream` 조합을 사용해야 한다.
