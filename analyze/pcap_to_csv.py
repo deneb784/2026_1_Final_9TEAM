@@ -47,8 +47,35 @@ def pcap_to_rows(pcap_file: str) -> list[list[str]]:
     return rows
 
 
-def convert(pcap_dir: str = PCAP_DIR, output_csv: str = OUTPUT_CSV) -> None:
-    """pcap_dir의 모든 pcap 파일을 읽어 output_csv로 저장한다."""
+def convert(pcap_dir: str = PCAP_DIR, output_dir: str = os.path.dirname(OUTPUT_CSV)) -> None:
+    """pcap_dir의 pcap 파일마다 개별 CSV 파일로 저장한다."""
+    pcap_files = sorted(
+        os.path.join(pcap_dir, f)
+        for f in os.listdir(pcap_dir)
+        if f.endswith(".pcap")
+    )
+
+    if not pcap_files:
+        print("[!] pcap 파일이 없습니다: %s" % pcap_dir)
+        return
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    for pcap_file in pcap_files:
+        source = os.path.basename(pcap_file)
+        csv_name = source.replace(".pcap", ".csv")
+        output_csv = os.path.join(output_dir, csv_name)
+
+        rows = pcap_to_rows(pcap_file)
+        with open(output_csv, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(FIELDS)
+            writer.writerows(rows)
+        print("[*] %s → %s (%d 패킷)" % (source, csv_name, len(rows)))
+
+
+def convert_merged(pcap_dir: str = PCAP_DIR, output_csv: str = OUTPUT_CSV) -> None:
+    """pcap_dir의 모든 pcap 파일을 하나의 CSV로 합쳐서 저장한다."""
     pcap_files = sorted(
         os.path.join(pcap_dir, f)
         for f in os.listdir(pcap_dir)
@@ -60,6 +87,7 @@ def convert(pcap_dir: str = PCAP_DIR, output_csv: str = OUTPUT_CSV) -> None:
         return
 
     os.makedirs(os.path.dirname(output_csv), exist_ok=True)
+
     with open(output_csv, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["source_file"] + FIELDS)
@@ -76,3 +104,4 @@ def convert(pcap_dir: str = PCAP_DIR, output_csv: str = OUTPUT_CSV) -> None:
 
 if __name__ == "__main__":
     convert()
+    convert_merged()

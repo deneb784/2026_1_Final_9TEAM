@@ -351,20 +351,31 @@ captured_packet/
 
 ## 8. CSV 변환 (`analyze/pcap_to_csv.py`)
 
-16개 pcap 파일을 하나의 CSV로 통합한다.
+16개 pcap 파일을 **pcap별 개별 CSV** 및 **전체 통합 CSV** 두 가지 형태로 변환한다.
 
 ```bash
-python3 analyze/pcap_to_csv.py
-# 출력: csv_results/packets.csv
+sudo python3 analyze/pcap_to_csv.py
 ```
 
+### 출력 파일
+
+**① pcap별 개별 CSV** (`convert()`)
+```
+csv_results/
+├── edge_p0_e0-eth1.csv   # h1 (10.0.0.1) 패킷
+├── edge_p0_e0-eth2.csv   # h2 (10.0.0.2) 패킷
+├── ...
+└── edge_p3_e1-eth2.csv   # h16 (10.3.1.2) 패킷 (총 16개)
+```
+- 헤더: FIELDS 그대로 (source_file 컬럼 없음)
+- `tcp.stream`이 파일 단위로 부여되므로 파일별로 분리하면 번호 충돌 없음
+```
 ### CSV 필드
 
 | 필드 | 설명 |
 |---|---|
-| `source_file` | 원본 pcap 파일명 (예: `edge_p0_e0-eth1.pcap`) |
-| `frame.number` | pcap 파일 내 패킷 번호 |
-| `frame.time_epoch` | 캡처 타임스탬프 (Unix epoch) |
+| `frame.number` | pcap 파일 내 패킷 일련번호 (tshark 부여, 1부터 시작) |
+| `frame.time_epoch` | 캡처 타임스탬프 (Unix epoch, ��대 시각) |
 | `frame.len` | 패킷 전체 크기 (bytes) |
 | `ip.src` | 출발지 IP |
 | `ip.dst` | 목적지 IP |
@@ -372,19 +383,15 @@ python3 analyze/pcap_to_csv.py
 | `ip.ttl` | TTL |
 | `tcp.srcport` | 출발지 포트 |
 | `tcp.dstport` | 목적지 포트 |
-| `tcp.stream` | TCP 스트림 ID (pcap 파일 단위로 부여) |
+| `tcp.stream` | TCP 연결 식별 번호 (tshark 부여, pcap 파일 단위로 0부터 시작) |
 | `tcp.len` | TCP 페이로드 크기 (bytes) |
-| `tcp.seq` | 시퀀스 번호 |
-| `tcp.ack` | ACK 번호 |
+| `tcp.seq` | 시퀀스 번호 (내가 보내는 데이터의 시작 바이트 위치) |
+| `tcp.ack` | ACK 번호 (상대방 데이터를 몇 바이트까지 수신했는지) |
 | `tcp.flags` | TCP 플래그 (SYN/ACK/FIN 등) |
 | `tcp.window_size` | 윈도우 크기 |
-| `tcp.time_relative` | 스트림 내 상대 시간 (초) |
-| `tcp.time_delta` | 이전 패킷과의 시간 차 (초) |
+| `tcp.time_relative` | 해당 TCP 연결 첫 패킷 기준 상대 시간 (초) |
+| `tcp.time_delta` | 같은 TCP 연결 내 직전 패킷과의 시간 차 (초) |
 | `tcp.analysis.retransmission` | 재전송 여부 |
 | `tcp.analysis.out_of_order` | 순서 어긋남 여부 |
 | `tcp.analysis.duplicate_ack` | 중복 ACK 여부 |
 | `tcp.analysis.fast_retransmission` | 빠른 재전송 여부 |
-
-### 고유 Flow 식별
-`tcp.stream`은 pcap 파일 단위로 0부터 부여되므로 파일이 다르면 번호가 겹칠 수 있다.
-고유한 flow를 식별하려면 `source_file` + `tcp.stream` 조합을 사용해야 한다.
