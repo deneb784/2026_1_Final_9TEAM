@@ -20,7 +20,9 @@ bool verbose_mode = false;  /* by default, we don't give more detailed output */
 char config_file_name[80] = {0};    /* configuration file */
 char dist_file_name[80] = {0};  /* flow size distribution file */
 char fct_log_name[80] = "flows.txt";    /* default log file */
+char flow_meta_log_name[160] = {0}; /* 외부 파이프라인에서 사용할 플로우 메타데이터 로그 */
 int seed = 0;   /* random seed */
+unsigned int src_index = 0;   /* 이 client 프로세스가 담당하는 src 호스트 인덱스 */
 char result_script_name[80] = {0};  /* script file to parse final results */
 unsigned int usleep_overhead_us = 0;    /* usleep overhead in microsecond */
 struct timeval tv_start, tv_end;    /* start and end time of traffic */
@@ -54,8 +56,11 @@ unsigned int *req_server_id = NULL; /* server ID */
 unsigned int *req_dscp = NULL;  /* DSCP of flow */
 unsigned int *req_rate = NULL;  /* sending rate of flow */
 unsigned int *req_sleep_us = NULL;  /* sleep time interval */
+unsigned int *req_conn_id = NULL;   /* 이 요청에 사용된 재사용 TCP 연결 ID */
+unsigned int *req_src_port = NULL;  /* 이 요청 전송 시 사용된 로컬 TCP 출발지 포트 */
 struct timeval *req_start_time; /* start time of flow */
 struct timeval *req_stop_time;  /* stop time of flow */
+char (*req_src_addr)[INET_ADDRSTRLEN] = NULL;  /* 이 요청 전송 시 사용된 로컬 출발지 IP */
 
 struct conn_list *connection_lists = NULL;  /* connection pool */
 
@@ -67,6 +72,8 @@ void read_args(int argc, char *argv[]);
 void read_config(char *file_name);
 /* set request variables */
 void set_req_variables();
+/* 기존 FCT 로그 파일명을 바탕으로 메타데이터 로그 경로 생성 */
+void set_flow_meta_log_name();
 /* receive traffic from established connections */
 void *listen_connection(void *ptr);
 /* generate flow requests */
@@ -79,6 +86,8 @@ void exit_connections();
 void exit_connection(struct conn_node *node);
 /* print statistic data */
 void print_statistic();
+/* flow.id를 외부 분석용 실제 플로우 ID로 내보내는 메타데이터 로그 작성 */
+void write_flow_metadata_log();
 /* clean up resources */
 void cleanup();
 
@@ -103,6 +112,7 @@ int main(int argc, char *argv[])
     read_config(config_file_name);
     /* set request variables */
     set_req_variables();
+    set_flow_meta_log_name();
 
     /* calculate usleep overhead */
     usleep_overhead_us = get_usleep_overhead(20);
@@ -200,6 +210,7 @@ void print_usage(char *program)
     printf("-t <time>       time in seconds (instead of -n)\n");
     printf("-l <file>       log file with flow completion times (default %s)\n", fct_log_name);
     printf("-s <seed>       seed to generate random numbers (default current time)\n");
+    printf("-x <src_index>  source host index for global flow ID\n");
     printf("-r <file>       python script to parse result files\n");
     printf("-v              give more detailed output (verbose)\n");
     printf("-h              display help information\n");
@@ -305,6 +316,20 @@ void read_args(int argc, char *argv[])
             else
             {
                 printf("Cannot read seed value\n");
+                print_usage(argv[0]);
+                exit(EXIT_FAILURE);
+            }
+        }
+        else if (strlen(argv[i]) == 2 && strcmp(argv[i], "-x") == 0)
+        {
+            if (i+1 < argc)
+            {
+                src_index = (unsigned int)strtoul(argv[i+1], NULL, 10);
+                i += 2;
+            }
+            else
+            {
+                printf("Cannot read source host index\n");
                 print_usage(argv[0]);
                 exit(EXIT_FAILURE);
             }
@@ -569,10 +594,14 @@ void set_req_variables()
     req_dscp = (unsigned int*)calloc(req_total_num, sizeof(unsigned int));
     req_rate = (unsigned int*)calloc(req_total_num, sizeof(unsigned int));
     req_sleep_us = (unsigned int*)calloc(req_total_num, sizeof(unsigned int));
+    req_conn_id = (unsigned int*)calloc(req_total_num, sizeof(unsigned int));
+    req_src_port = (unsigned int*)calloc(req_total_num, sizeof(unsigned int));
     req_start_time = (struct timeval*)calloc(req_total_num, sizeof(struct timeval));
     req_stop_time = (struct timeval*)calloc(req_total_num, sizeof(struct timeval));
+    req_src_addr = (char (*)[INET_ADDRSTRLEN])calloc(req_total_num, sizeof(char[INET_ADDRSTRLEN]));
 
-    if (!req_size || !req_server_id || !req_dscp || !req_rate || !req_sleep_us || !req_start_time || !req_stop_time)
+    if (!req_size || !req_server_id || !req_dscp || !req_rate || !req_sleep_us || !req_conn_id ||
+        !req_src_port || !req_start_time || !req_stop_time || !req_src_addr)
     {
         cleanup();
         error("Error: calloc per-request variables");
@@ -605,6 +634,18 @@ void set_req_variables()
     printf("The average DSCP value is %.2f\n", dscp_total/req_total_num);
     printf("The average flow sending rate is %lu Mbps\n", rate_total/req_total_num);
     printf("The expected experiment duration is %lu s\n", req_interval_total/1000000);
+}
+
+void set_flow_meta_log_name()
+{
+    char *dot = NULL;
+
+    snprintf(flow_meta_log_name, sizeof(flow_meta_log_name), "%s", fct_log_name);
+    dot = strrchr(flow_meta_log_name, '.');
+    if (dot)
+        snprintf(dot, sizeof(flow_meta_log_name) - (dot - flow_meta_log_name), "_meta.csv");
+    else
+        snprintf(flow_meta_log_name, sizeof(flow_meta_log_name), "%s_meta.csv", fct_log_name);
 }
 
 /* receive traffic from established connections */
@@ -688,6 +729,8 @@ void run_request(unsigned int req_id)
     int sockfd;
     struct flow_metadata flow;
     struct conn_node* node = search_conn_list(&connection_lists[server_id]);
+    struct sockaddr_in local_addr;
+    socklen_t local_addr_len = sizeof(local_addr);
     unsigned int active_connections = 0;
     unsigned int i = 0;
 
@@ -729,6 +772,23 @@ void run_request(unsigned int req_id)
     pthread_mutex_lock(&(node->list->lock));
     node->list->available_len--;
     pthread_mutex_unlock(&(node->list->lock));
+
+    /* flow.id를 실제 요청 식별자로 사용한다.
+       같은 TCP 연결이 여러 플로우에 재사용될 수 있으므로,
+       요청 시작 시점의 소켓 정보도 함께 저장해 후속 피처 추출이
+       "연결"이 아니라 "요청(flow.id)" 기준으로 동작하게 한다. */
+    req_conn_id[req_id] = node->id;
+    if (getsockname(sockfd, (struct sockaddr *)&local_addr, &local_addr_len) == 0)
+    {
+        if (!inet_ntop(AF_INET, &(local_addr.sin_addr), req_src_addr[req_id], INET_ADDRSTRLEN))
+            snprintf(req_src_addr[req_id], INET_ADDRSTRLEN, "unknown");
+        req_src_port[req_id] = ntohs(local_addr.sin_port);
+    }
+    else
+    {
+        snprintf(req_src_addr[req_id], INET_ADDRSTRLEN, "unknown");
+        req_src_port[req_id] = 0;
+    }
 
     if (!write_flow_req(sockfd, &flow))
         perror("Error: generate request");
@@ -822,11 +882,63 @@ void print_statistic()
     }
 
     fclose(fd);
+    write_flow_metadata_log();
     goodput_mbps = req_size_total * 8 / duration_us;
     printf("The actual RX throughput is %u Mbps\n", (unsigned int)(goodput_mbps/TG_GOODPUT_RATIO));
     printf("The actual duration is %llu s\n", duration_us/1000000);
     printf("===========================================\n");
     printf("Write FCT results to %s\n", fct_log_name);
+    printf("Write flow metadata to %s\n", flow_meta_log_name);
+}
+
+void write_flow_metadata_log()
+{
+    unsigned int i = 0;
+    unsigned int server_id = 0;
+    FILE *fd = NULL;
+
+    fd = fopen(flow_meta_log_name, "w");
+    if (!fd)
+        error("Error: open the flow metadata log file");
+
+    fprintf(fd, "src_index,flow_id,server_id,connection_id,src_ip,src_port,dst_ip,dst_port,size_bytes,dscp,rate_mbps,start_time_us,stop_time_us,fct_us\n");
+
+    for (i = 0; i < req_total_num; i++)
+    {
+        unsigned long long start_us = 0;
+        unsigned long long stop_us = 0;
+        unsigned long long fct_us = 0;
+
+        server_id = req_server_id[i];
+        start_us = (unsigned long long)req_start_time[i].tv_sec * 1000000 + req_start_time[i].tv_usec;
+        stop_us = (unsigned long long)req_stop_time[i].tv_sec * 1000000 + req_stop_time[i].tv_usec;
+        if (stop_us >= start_us && stop_us > 0)
+            fct_us = stop_us - start_us;
+
+        /* 요청 시작 시점의 flow.id와 소켓 정보를 함께 기록한다.
+           persistent connection 재사용 때문에 5-tuple은 반복될 수 있지만,
+           src_index와 flow_id 조합은 실험 전체에서 요청마다 고유하다. */
+        fprintf(
+            fd,
+            "%u,%u,%u,%u,%s,%u,%s,%u,%u,%u,%u,%llu,%llu,%llu\n",
+            src_index,
+            i + 1,
+            server_id,
+            req_conn_id[i],
+            req_src_addr[i][0] ? req_src_addr[i] : "unknown",
+            req_src_port[i],
+            server_addr[server_id],
+            server_port[server_id],
+            req_size[i],
+            req_dscp[i],
+            req_rate[i],
+            start_us,
+            stop_us,
+            fct_us
+        );
+    }
+
+    fclose(fd);
 }
 
 /* clean up resources */
@@ -852,8 +964,11 @@ void cleanup()
     free(req_dscp);
     free(req_rate);
     free(req_sleep_us);
+    free(req_conn_id);
+    free(req_src_port);
     free(req_start_time);
     free(req_stop_time);
+    free(req_src_addr);
 
     if (connection_lists)
     {

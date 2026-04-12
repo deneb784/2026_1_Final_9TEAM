@@ -105,8 +105,8 @@ def startSrc(srcHost, flowsPerPair, srcIndex):
     command = (
         'TrafficGenerator/bin/client -b 80 '
         '-c TrafficGenerator/conf/src%s_config.txt '
-        '-n %s -l results/flows_%s.txt -s 1 -v'
-        % (srcIndex, flowsPerPair, srcIndex)
+        '-n %s -l results/flows_%s.txt -s 1 -x %s -v'
+        % (srcIndex, flowsPerPair, srcIndex, srcIndex)
     )
     log_path = 'results/log_%s.txt' % srcIndex
     log_file = open(log_path, 'w')
@@ -118,4 +118,3 @@ def startSrc(srcHost, flowsPerPair, srcIndex):
     )
     process._log_file = log_file
     return process
-

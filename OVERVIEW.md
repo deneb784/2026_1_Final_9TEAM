@@ -260,6 +260,7 @@ DPID 범위로 스위치 타입 판별 후 OpenFlow 룰 설치 |
 | 결과물 | 경로 | 설명 |
 |---|---|---|
 | 플로우 결과 | `results/flows_{srcIndex}.txt` | 각 src 호스트의 플로우 완료 로그 |
+| 플로우 메타데이터 | `results/flows_{srcIndex}_meta.csv` | 요청 단위 flow 식별용 메타데이터 |
 | 실행 로그 | `results/log_{srcIndex}.txt` | client 실행 로그 |
 
 ### 동작 과정
@@ -295,6 +296,7 @@ TrafficGenerator/bin/client
   -n {flowsPerPair}               # 전송할 플로우 수
   -l results/flows_{N}.txt        # 결과 저장 파일
   -s 1                            # 랜덤 시드
+  -x {srcIndex}                   # 송신 host 인덱스
   -v                              # verbose
 ```
 - subprocess 사용
@@ -349,7 +351,49 @@ captured_packet/
 
 ---
 
-## 8. CSV 변환 (`analyze/pcap_to_csv.py`)
+## 8. 요청 단위 Flow 식별
+
+TrafficGenerator는 persistent connection을 재사용하므로, 서로 다른 요청이 같은 TCP 연결을 공유할 수 있다.
+따라서 `src_port` 또는 `5-tuple` 기준으로는 실제 요청 단위 flow를 안정적으로 구분할 수 없다.
+
+이를 해결하기 위해 플로우 식별 기준을 **TCP 연결**이 아니라 **요청(Request)** 으로 변경했다.
+
+### 변경 파일
+| 파일 | 변경 내용 |
+|---|---|
+| [`TrafficGenerator/src/client/client.c`](/home/leesungwon/capstone/TrafficGenerator/src/client/client.c:725) | 각 요청에 `flow.id = req_id + 1` 부여, 요청별 메타데이터 CSV 기록 |
+| [`TrafficGenerator/src/client/client.c`](/home/leesungwon/capstone/TrafficGenerator/src/client/client.c:894) | `flows_{srcIndex}_meta.csv` 생성 |
+| [`flowGenerator.py`](/home/leesungwon/capstone/flowGenerator.py:105) | client 실행 시 `-x <srcIndex>` 전달 |
+
+### 식별 기준
+- 각 요청은 client 내부에서 `flow.id = req_id + 1` 값을 가진다.
+- 각 src host마다 `flow.id`는 다시 1부터 시작하므로, 실험 전체 고유 식별자는 `(src_index, flow_id)` 조합으로 정의한다.
+
+### 메타데이터 필드
+
+| 필드 | 설명 |
+|---|---|
+| `src_index` | 송신(src) host 인덱스 |
+| `flow_id` | 해당 src host 내부 요청 ID |
+| `server_id` | 선택된 destination server 인덱스 |
+| `connection_id` | 요청 전송에 사용된 persistent connection ID |
+| `src_ip` | 요청 시작 시점의 로컬 출발지 IP |
+| `src_port` | 요청 시작 시점의 로컬 출발지 TCP 포트 |
+| `dst_ip` | 목적지 서버 IP |
+| `dst_port` | 목적지 서버 포트 |
+| `size_bytes` | 요청 크기 |
+| `dscp` | DSCP 값 |
+| `rate_mbps` | 송신 rate |
+| `start_time_us` | 요청 시작 시각 |
+| `stop_time_us` | 요청 종료 시각 |
+| `fct_us` | Flow Completion Time |
+
+### 활용 목적
+후속 피처 추출은 더 이상 `5-tuple` 기준이 아니라, `flows_*_meta.csv`의 `(src_index, flow_id)`와 소켓/시간 정보를 기준으로 패킷을 요청 단위로 매칭해야 한다.
+
+---
+
+## 9. CSV 변환 (`analyze/pcap_to_csv.py`)
 
 16개 pcap 파일을 **pcap별 개별 CSV** 및 **전체 통합 CSV** 두 가지 형태로 변환한다.
 
@@ -395,3 +439,7 @@ csv_results/
 | `tcp.analysis.out_of_order` | 순서 어긋남 여부 |
 | `tcp.analysis.duplicate_ack` | 중복 ACK 여부 |
 | `tcp.analysis.fast_retransmission` | 빠른 재전송 여부 |
+
+### 주의
+`tcp.stream`은 pcap 파일 단위 TCP 스트림 번호이므로, persistent connection 재사용 환경에서는 실제 요청 단위 flow 식별자로 사용할 수 없다.
+따라서 요청 단위 분석은 `source_file + tcp.stream`이 아니라 `flows_*_meta.csv`의 `(src_index, flow_id)`를 기준으로 해석해야 한다.
