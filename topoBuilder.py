@@ -13,9 +13,9 @@ def fatTreeBuilder(k=4):
         - Host 계층: 각 Edge 스위치마다 2개의 호스트 (총 16개)
         
     링크 대역폭:
-        - Host <-> Edge: 1000 Mbps
-        - Edge <-> Aggregation: 10 Mbps
-        - Aggregation <-> Core: 10 Mbps
+        - Host <-> Edge: 100 Mbps
+        - Edge <-> Aggregation: 100 Mbps
+        - Aggregation <-> Core: 100 Mbps
     """
 
     class FatTreeTopo(Topo):
