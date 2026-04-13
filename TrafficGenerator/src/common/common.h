@@ -11,7 +11,21 @@ struct flow_metadata
     unsigned int size;  /* flow size (bytes) */
     unsigned int tos;   /* ToS value */
     unsigned int rate;  /* sending rate (Mbps) */
+    unsigned int direction; /* src->dst / dst->src */
 };
+
+#define TG_FLOW_DIR_SRC_TO_DST 0U
+#define TG_FLOW_DIR_DST_TO_SRC 1U
+
+static inline unsigned int tg_compose_tos(unsigned int dscp, unsigned int direction)
+{
+    return (dscp << 2) | (direction & 0x1U);
+}
+
+static inline unsigned int tg_tos_to_dscp(unsigned int tos)
+{
+    return tos >> 2;
+}
 
 /* flow meata data size */
 #define TG_METADATA_SIZE (sizeof(struct flow_metadata))

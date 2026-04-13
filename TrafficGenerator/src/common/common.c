@@ -140,6 +140,7 @@ bool read_flow_metadata(int fd, struct flow_metadata *f)
     memcpy(&(f->size), buf + offsetof(struct flow_metadata, size), sizeof(f->size));
     memcpy(&(f->tos), buf + offsetof(struct flow_metadata, tos), sizeof(f->tos));
     memcpy(&(f->rate), buf + offsetof(struct flow_metadata, rate), sizeof(f->rate));
+    memcpy(&(f->direction), buf + offsetof(struct flow_metadata, direction), sizeof(f->direction));
 
     return true;
 }
@@ -157,6 +158,7 @@ bool write_flow_req(int fd, struct flow_metadata *f)
     memcpy(buf + offsetof(struct flow_metadata, size), &(f->size), sizeof(f->size));
     memcpy(buf + offsetof(struct flow_metadata, tos),  &(f->tos), sizeof(f->tos));
     memcpy(buf + offsetof(struct flow_metadata, rate), &(f->rate), sizeof(f->rate));
+    memcpy(buf + offsetof(struct flow_metadata, direction), &(f->direction), sizeof(f->direction));
 
     /* write the request into the socket */
     if (write_exact(fd, buf, TG_METADATA_SIZE, TG_METADATA_SIZE, 0, f->tos, 0, false) == TG_METADATA_SIZE)

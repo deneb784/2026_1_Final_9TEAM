@@ -736,8 +736,9 @@ void run_request(unsigned int req_id)
 
     flow.id = req_id + 1;   /* we reserve flow ID 0 for special usage */
     flow.size = req_size[req_id];
-    flow.tos = req_dscp[req_id] << 2;   /* ToS = DSCP * 4 */
+    flow.tos = tg_compose_tos(req_dscp[req_id], TG_FLOW_DIR_SRC_TO_DST);
     flow.rate = req_rate[req_id];
+    flow.direction = TG_FLOW_DIR_SRC_TO_DST;
 
     /* cannot find available connection. Need to establish new connections. */
     if (!node)
@@ -835,6 +836,7 @@ void exit_connection(struct conn_node *node)
     flow.size = 100;
     flow.tos = 0;
     flow.rate = 0;
+    flow.direction = TG_FLOW_DIR_SRC_TO_DST;
 
     if (!node)
         return;
@@ -901,7 +903,7 @@ void write_flow_metadata_log()
     if (!fd)
         error("Error: open the flow metadata log file");
 
-    fprintf(fd, "src_index,flow_id,server_id,connection_id,src_ip,src_port,dst_ip,dst_port,size_bytes,dscp,rate_mbps,start_time_us,stop_time_us,fct_us\n");
+    fprintf(fd, "src_index,flow_id,server_id,connection_id,src_ip,src_port,dst_ip,dst_port,size_bytes,dscp,rate_mbps,start_time_us,stop_time_us,fct_us,src_to_dst_flow_id,dst_to_src_flow_id,src_to_dst_tos,dst_to_src_tos\n");
 
     for (i = 0; i < req_total_num; i++)
     {
@@ -920,7 +922,7 @@ void write_flow_metadata_log()
            src_index와 flow_id 조합은 실험 전체에서 요청마다 고유하다. */
         fprintf(
             fd,
-            "%u,%u,%u,%u,%s,%u,%s,%u,%u,%u,%u,%llu,%llu,%llu\n",
+            "%u,%u,%u,%u,%s,%u,%s,%u,%u,%u,%u,%llu,%llu,%llu,%u:%u:src_to_dst,%u:%u:dst_to_src,%u,%u\n",
             src_index,
             i + 1,
             server_id,
@@ -934,7 +936,13 @@ void write_flow_metadata_log()
             req_rate[i],
             start_us,
             stop_us,
-            fct_us
+            fct_us,
+            src_index,
+            i + 1,
+            src_index,
+            i + 1,
+            tg_compose_tos(req_dscp[i], TG_FLOW_DIR_SRC_TO_DST),
+            tg_compose_tos(req_dscp[i], TG_FLOW_DIR_DST_TO_SRC)
         );
     }
 

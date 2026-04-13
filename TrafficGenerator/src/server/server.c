@@ -148,7 +148,14 @@ void* handle_connection(void* ptr)
         }
 
         if (verbose_mode)
-            printf("Flow request: ID: %u Size: %u bytes ToS: %u Rate: %u Mbps\n", flow.id, flow.size, flow.tos, flow.rate);
+            printf("Flow request: ID: %u Size: %u bytes ToS: %u Rate: %u Mbps Direction: %u\n",
+                   flow.id, flow.size, flow.tos, flow.rate, flow.direction);
+
+        if (flow.id != 0)
+        {
+            flow.direction = TG_FLOW_DIR_DST_TO_SRC;
+            flow.tos = tg_compose_tos(tg_tos_to_dscp(flow.tos), flow.direction);
+        }
 
         /* generate the flow response */
         if (!write_flow(sockfd, &flow, sleep_overhead_us))
