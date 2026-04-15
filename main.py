@@ -4,6 +4,7 @@ from mininet.log import setLogLevel
 from topoBuilder import fatTreeBuilder
 from flowGenerator import flowGenerator
 from packet_captuer import CapturePoint, PacketCapturer
+from analyze.ecmp_verification import run_ecmp_verification
 
 """
 실행 방법:
@@ -28,6 +29,32 @@ def disable_interface_offloads(network):
                 % intf.name
             )
 
+
+def configure_ecmp_group_selection(network, k):
+    """Ryu가 설치한 base ECMP group을 OVS hash selection 방식으로 다시 설정한다."""
+    uplink_ports = list(range(k // 2 + 1, k + 1))
+
+    def _mod_group(switch_name, basis):
+        buckets = ",".join("bucket=output:%d" % port for port in uplink_ports)
+        group_spec = (
+            "group_id=1,type=select,"
+            "selection_method=hash,"
+            "selection_method_param=%d,"
+            "fields(ip_src,ip_dst,tcp_src,tcp_dst),%s"
+            % (basis, buckets)
+        )
+        subprocess.run(
+            ["ovs-ofctl", "-O", "OpenFlow15", "mod-group", switch_name, group_spec],
+            check=True,
+        )
+
+    for idx, edge_name in enumerate(network.topo.edge_switches):
+        _mod_group(edge_name, 100 + idx)
+
+    for idx, agg_name in enumerate(network.topo.agg_switches):
+        # edge와 다른 basis를 사용해 상위 계층에서 동일 hash 결과가 반복되는 현상을 줄인다.
+        _mod_group(agg_name, 1000 + idx)
+
 if __name__ == '__main__':
 
     if len(sys.argv) < 2:
@@ -39,12 +66,14 @@ if __name__ == '__main__':
     DST_PORT = 5001 # 트래픽을 받는 HOST 포트 번호 5001로 고정
 
     setLogLevel('info')
+    runtime_capture_dir = '/tmp/capstone_captured_packet'
 
     # TrafficGenerator 컴파일
     os.system('cd TrafficGenerator && make && cd -')
 
     # Ryu 컨트롤러 백그라운드 실행
     print('[*] Ryu 컨트롤러 시작 중...')
+    network = None
     ryu_proc = subprocess.Popen([
         'docker', 'run', '--rm', '--network', 'host',
         '-v', os.path.abspath(os.path.dirname(__file__)) + ':/app',
@@ -68,7 +97,11 @@ if __name__ == '__main__':
         time.sleep(3)
         print('[*] 룰 설치 완료 확인')
 
-        # 모든 edge 스위치에 캡처 지점 생성 (host-facing 인터페이스)
+        print('[*] OVS hash 기반 ECMP group selection 재설정 중...')
+        configure_ecmp_group_selection(network, k)
+        print('[*] OVS hash 기반 ECMP group selection 적용 완료')
+
+        # 모든 edge 스위치에 host-facing / uplink 캡처 지점 생성
         capture_points = []
         for edge_name in network.topo.edge_switches:
             edge_node = network[edge_name]
@@ -79,16 +112,48 @@ if __name__ == '__main__':
                 iface = '%s-eth%d' % (edge_name, i)
                 host_ip = '10.%s.%s.%d' % (pod, edge_idx, i)
                 capture_points.append(CapturePoint(node=edge_node, interface=iface, src_ips=(host_ip,)))
-        print('[*] 캡처 지점 %d개 생성 완료 (edge 스위치 %d개 × 인터페이스 %d개)' % (
-            len(capture_points), len(network.topo.edge_switches), k // 2))
+            for i in range(k // 2 + 1, k + 1):
+                iface = '%s-eth%d' % (edge_name, i)
+                capture_points.append(CapturePoint(
+                    node=edge_node,
+                    interface=iface,
+                    capture_filter='tcp',
+                    output_name=iface,
+                ))
+
+        # agg 계층의 core uplink도 함께 캡처해 상위 계층 분산을 pcap으로 직접 확인한다.
+        for agg_name in network.topo.agg_switches:
+            agg_node = network[agg_name]
+            for i in range(k // 2 + 1, k + 1):
+                iface = '%s-eth%d' % (agg_name, i)
+                capture_points.append(CapturePoint(
+                    node=agg_node,
+                    interface=iface,
+                    capture_filter='tcp',
+                    output_name=iface,
+                ))
+        print(
+            '[*] 캡처 지점 %d개 생성 완료 (edge host-facing %d개, edge uplink %d개, agg uplink %d개)'
+            % (
+                len(capture_points),
+                len(network.topo.edge_switches) * (k // 2),
+                len(network.topo.edge_switches) * (k // 2),
+                len(network.topo.agg_switches) * (k // 2),
+            )
+        )
+
+        # Mininet node 내부 tshark가 결과 파일을 쓸 수 있도록 임시 writable 디렉터리를 사용한다.
+        os.makedirs(runtime_capture_dir, exist_ok=True)
+        os.chmod(runtime_capture_dir, 0o777)
 
         # PacketCapturer 시작
         capturer = PacketCapturer(
             capture_points=capture_points,
-            output_dir='captured_packet',
+            output_dir=runtime_capture_dir,
+            log_dir=os.path.join(runtime_capture_dir, 'logs'),
         )
         capturer.start()
-        print('[*] 패킷 캡처 시작 (저장 위치: captured_packet/)')
+        print('[*] 패킷 캡처 시작 (임시 저장 위치: %s)' % runtime_capture_dir)
 
         # 트래픽 생성 (pod0,1=src → pod2,3=dst)
         print('[*] 트래픽 생성 시작...')
@@ -98,6 +163,18 @@ if __name__ == '__main__':
 
         capturer.stop()
         print('[*] 패킷 캡처 중단')
+
+        # 실험 중 생성된 uplink pcap을 후처리 스크립트가 읽는 고정 경로로 복사한다.
+        os.makedirs('captured_packet', exist_ok=True)
+        os.system('cp -r %s/. captured_packet/' % runtime_capture_dir)
+        print('[*] 패킷 캡처 파일 복사 완료 (captured_packet/)')
+
+        print('[*] ECMP 검증용 uplink pcap 요약 생성 중...')
+        run_ecmp_verification(
+            pcap_dir='captured_packet',
+            results_dir='results',
+        )
+        print('[*] ECMP 검증 결과 저장 완료 (results/ecmp_*)')
 
         # 결과 분석
         result_script = 'TrafficGenerator/src/script/result.py'
@@ -112,7 +189,8 @@ if __name__ == '__main__':
     finally:
         # 정리
         print('[*] 네트워크 종료 중...')
-        network.stop()
+        if network is not None:
+            network.stop()
         ryu_proc.terminate()
         os.system('mn -c')
         os.system('pkill -KILL tshark')
