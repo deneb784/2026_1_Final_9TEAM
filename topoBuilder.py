@@ -35,7 +35,7 @@ def fatTreeBuilder(k=4):
                 self.core_switches.append(
                     self.addSwitch('core%s' % i,
                                    dpid='%016x' % i,
-                                   protocols='OpenFlow13',
+                                   protocols='OpenFlow13,OpenFlow15',
                                    failMode='secure')
                 )
 
@@ -68,7 +68,7 @@ def fatTreeBuilder(k=4):
                     agg_dpid = 100 + p * sw_per_pod + a + 1
                     pod_agg.append(self.addSwitch(agg_name,
                                                   dpid='%016x' % agg_dpid,
-                                                  protocols='OpenFlow13',
+                                                  protocols='OpenFlow13,OpenFlow15',
                                                   failMode='secure'))
                     self.agg_switches.append(agg_name)
 
@@ -79,7 +79,7 @@ def fatTreeBuilder(k=4):
                     edge_dpid = 200 + p * sw_per_pod + e + 1
                     pod_edge.append(self.addSwitch(edge_name,
                                                    dpid='%016x' % edge_dpid,
-                                                   protocols='OpenFlow13',
+                                                   protocols='OpenFlow13,OpenFlow15',
                                                    failMode='secure'))
                     self.edge_switches.append(edge_name)
 
