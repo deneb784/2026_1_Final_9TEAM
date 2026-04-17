@@ -4,7 +4,7 @@ from mininet.log import setLogLevel
 from topoBuilder import fatTreeBuilder
 from flowGenerator import flowGenerator
 from packet_captuer import CapturePoint, PacketCapturer
-from analyze.ecmp_verification import run_ecmp_verification
+# from analyze.ecmp_verification import run_ecmp_verification
 
 """
 실행 방법:
@@ -97,11 +97,11 @@ if __name__ == '__main__':
         time.sleep(3)
         print('[*] 룰 설치 완료 확인')
 
-        print('[*] OVS hash 기반 ECMP group selection 재설정 중...')
-        configure_ecmp_group_selection(network, k)
-        print('[*] OVS hash 기반 ECMP group selection 적용 완료')
+        # print('[*] OVS hash 기반 ECMP group selection 재설정 중...')
+        # configure_ecmp_group_selection(network, k)
+        # print('[*] OVS hash 기반 ECMP group selection 적용 완료')
 
-        # 모든 edge 스위치에 host-facing / uplink 캡처 지점 생성
+        # 모든 edge 스위치에 host-facing 캡처 지점 생성
         capture_points = []
         for edge_name in network.topo.edge_switches:
             edge_node = network[edge_name]
@@ -112,33 +112,32 @@ if __name__ == '__main__':
                 iface = '%s-eth%d' % (edge_name, i)
                 host_ip = '10.%s.%s.%d' % (pod, edge_idx, i)
                 capture_points.append(CapturePoint(node=edge_node, interface=iface, src_ips=(host_ip,)))
-            for i in range(k // 2 + 1, k + 1):
-                iface = '%s-eth%d' % (edge_name, i)
-                capture_points.append(CapturePoint(
-                    node=edge_node,
-                    interface=iface,
-                    capture_filter='tcp',
-                    output_name=iface,
-                ))
+            # ECMP 검증용 edge uplink 캡처는 잠시 비활성화한다.
+            # for i in range(k // 2 + 1, k + 1):
+            #     iface = '%s-eth%d' % (edge_name, i)
+            #     capture_points.append(CapturePoint(
+            #         node=edge_node,
+            #         interface=iface,
+            #         capture_filter='tcp',
+            #         output_name=iface,
+            #     ))
 
-        # agg 계층의 core uplink도 함께 캡처해 상위 계층 분산을 pcap으로 직접 확인한다.
-        for agg_name in network.topo.agg_switches:
-            agg_node = network[agg_name]
-            for i in range(k // 2 + 1, k + 1):
-                iface = '%s-eth%d' % (agg_name, i)
-                capture_points.append(CapturePoint(
-                    node=agg_node,
-                    interface=iface,
-                    capture_filter='tcp',
-                    output_name=iface,
-                ))
+        # ECMP 검증용 agg uplink 캡처는 잠시 비활성화한다.
+        # for agg_name in network.topo.agg_switches:
+        #     agg_node = network[agg_name]
+        #     for i in range(k // 2 + 1, k + 1):
+        #         iface = '%s-eth%d' % (agg_name, i)
+        #         capture_points.append(CapturePoint(
+        #             node=agg_node,
+        #             interface=iface,
+        #             capture_filter='tcp',
+        #             output_name=iface,
+        #         ))
         print(
-            '[*] 캡처 지점 %d개 생성 완료 (edge host-facing %d개, edge uplink %d개, agg uplink %d개)'
+            '[*] 캡처 지점 %d개 생성 완료 (edge host-facing %d개)'
             % (
                 len(capture_points),
                 len(network.topo.edge_switches) * (k // 2),
-                len(network.topo.edge_switches) * (k // 2),
-                len(network.topo.agg_switches) * (k // 2),
             )
         )
 
@@ -164,17 +163,17 @@ if __name__ == '__main__':
         capturer.stop()
         print('[*] 패킷 캡처 중단')
 
-        # 실험 중 생성된 uplink pcap을 후처리 스크립트가 읽는 고정 경로로 복사한다.
+        # 실험 중 생성된 pcap을 후처리 스크립트가 읽는 고정 경로로 복사한다.
         os.makedirs('captured_packet', exist_ok=True)
         os.system('cp -r %s/. captured_packet/' % runtime_capture_dir)
         print('[*] 패킷 캡처 파일 복사 완료 (captured_packet/)')
 
-        print('[*] ECMP 검증용 uplink pcap 요약 생성 중...')
-        run_ecmp_verification(
-            pcap_dir='captured_packet',
-            results_dir='results',
-        )
-        print('[*] ECMP 검증 결과 저장 완료 (results/ecmp_*)')
+        # print('[*] ECMP 검증용 uplink pcap 요약 생성 중...')
+        # run_ecmp_verification(
+        #     pcap_dir='captured_packet',
+        #     results_dir='results',
+        # )
+        # print('[*] ECMP 검증 결과 저장 완료 (results/ecmp_*)')
 
         # 결과 분석
         result_script = 'TrafficGenerator/src/script/result.py'
