@@ -589,10 +589,12 @@ csv_results/
 
 ## 11. Feature Pipeline (`feature_pipeline/`)
 
-`feature_pipeline`는 실험 종료 후 생성된 요청 메타데이터와 패킷 캡처 파일을 입력으로 받아, 요청 단위 및 방향별 logical flow 단위의 feature를 추출하는 후처리 파이프라인이다.
+`feature_pipeline는 실험 종료 후 생성된 요청 메타데이터와 패킷 캡처 파일을 입력으로 받아, 요청 단위 및 방향별 logical flow 단위의 packet-level sequence를 추출하는 후처리 파이프라인이다.
 
 ### 배경
-패킷 기반 feature를 요청 단위로 추출하려면 각 패킷이 어떤 요청에 속하는지 식별할 수 있어야 한다. 본 실험 환경에서는 동일한 `src/dst ip:port` 조합이 여러 요청에서 반복될 수 있으므로, 요청 메타데이터(`flows_*_meta.csv`)와 시간 구간 정보를 함께 사용하여 요청 단위 매칭을 수행한다.
+패킷 기반 정보를 요청 단위로 추출하려면 각 패킷이 어떤 요청에 속하는지 식별할 수 있어야 한다. 본 실험 환경에서는 동일한 src/dst ip:port 조합이 여러 요청에서 반복될 수 있으므로, 요청 메타데이터(flows_*_meta.csv)와 시간 구간 정보를 함께 사용하여 요청 단위 매칭을 수행한다.
+
+초기 구현에서는 방향별 flow에 누적된 패킷으로부터 평균, 합계 등의 통계 feature를 계산해 features 형태로 출력하였다. 이후 packet별 정보와 순서 정보를 보존하기 위해, 현재는 각 패킷의 feature를 그대로 유지한 packets sequence 형태로 출력하도록 구조를 변경하였다.
 
 ### 입력
 - `results/flows_*_meta.csv`
@@ -608,11 +610,11 @@ csv_results/
 - `feature_pipeline/matcher.py`
   - 패킷의 `src/dst ip:port` 및 시간 구간을 이용해 패킷을 `(src_index, flow_id, direction)`에 매칭한다.
 - `feature_pipeline/flow_cache.py`
-  - 같은 방향의 패킷을 `(src_index, flow_id, direction)` 키로 누적하고, feature 추출 가능 여부를 관리한다.
+  - 같은 방향의 패킷을 (src_index, flow_id, direction) 키로 누적하고, packet sequence 생성 가능 여부를 관리한다.
 - `feature_pipeline/feature_extractor.py`
-  - 누적된 패킷 버퍼로부터 길이, 시간, 재전송 관련 feature를 계산한다.
+  - 누적된 패킷 버퍼로부터 packet-level feature sequence를 생성한다.
 - `feature_pipeline/pipeline.py`
-  - 전체 파이프라인을 실행하고 최종 JSON `FlowRequest` payload를 생성한다.
+  - 전체 파이프라인을 실행하고 최종 JSON payload를 생성한다.
 
 
 ### 메타데이터 기반 요청 식별
@@ -646,8 +648,8 @@ csv_results/
 3. `captured_packet/*.pcap`를 `tshark`로 읽어 `PacketRecord` 객체로 변환한다.
 4. 각 패킷을 메타와 비교하여 `(src_index, flow_id, direction)`에 매칭한다.
 5. 같은 방향의 패킷을 `FlowCache`에 누적한다.
-6. 지정한 개수(`feature_packet_count`)의 패킷이 모이면 feature를 계산한다.
-7. 결과를 JSON `FlowRequest` payload로 생성한다.
+6. 지정한 개수(feature_packet_count)의 패킷이 모이면 packet sequence를 구성한다.
+7. 결과를 JSON payload로 생성한다.
 
 ### FlowCache 구조
 `FlowCache`는 같은 방향 패킷만 하나의 버퍼에 누적한다. 캐시 키는 다음과 같다.
@@ -660,67 +662,79 @@ csv_results/
 
 두 개의 방향별 flow entry가 존재할 수 있다.
 
-### Feature 생성 방식
-패킷이 요청 및 방향별 logical flow에 매칭되면, 해당 패킷은 `FlowCache`에 누적된다. 같은 방향의 패킷이 `feature_packet_count`개 모이면, 그 시점까지의 패킷 버퍼를 기반으로 feature를 계산한다. 현재 구현은 패킷 길이, TCP payload 크기, 패킷 간 시간 간격(IAT), 재전송 여부 등 기본 통계 정보를 추출하며, 이를 최종 `FlowRequest`의 `features` 필드에 포함한다.
+### Packet Sequence 생성 방식
+패킷이 요청 및 방향별 logical flow에 매칭되면, 해당 패킷은 FlowCache에 누적된다. 같은 방향의 패킷이 feature_packet_count개 모이면, 그 시점까지의 패킷 버퍼를 기반으로 packet sequence를 생성한다.
 
-### 현재 feature 항목
-현재 구현된 feature는 다음과 같다.
+현재 구현은 각 패킷에 대해 다음과 같은 packet-level feature를 유지한다.
+- `frame_len`
+- `ip_len`
+- `ip_ttl`
+- `tcp_payload_bytes`
+- `tcp_flags`
+- `tcp_window_size`
+- `iat_us`
+- `retransmission`
+- `out_of_order`
+- `duplicate_ack`
+- `fast_retransmission`
 
-- `packet_count`
-- `total_frame_bytes`
-- `total_tcp_payload_bytes`
-- `mean_frame_len`
-- `min_frame_len`
-- `max_frame_len`
-- `flow_duration_us`
-- `mean_iat_us`
-- `min_iat_us`
-- `max_iat_us`
-- `retransmission_count`
-- `duplicate_ack_count`
-- `out_of_order_count`
-- `fast_retransmission_count`
+즉 기존처럼 여러 패킷을 평균, 합계, 최댓값 등의 통계값으로 요약하는 대신, 각 패킷의 feature를 순서대로 보존한 sequence 형태로 출력한다.
 
 ### 출력 포맷
-파이프라인은 방향별 logical flow에 대해 다음 형태의 `FlowRequest`를 생성한다.
+파이프라인은 방향별 logical flow에 대해 다음 형태의 JSON payload를 생성한다.
 
 ```json
 {
   "request_key": {
     "src_index": 0,
-    "flow_id": 4
+    "flow_id": 19
   },
   "direction": "src_to_dst",
-  "logical_flow_id": "0:4:src_to_dst",
+  "logical_flow_id": "0:19:src_to_dst",
   "meta": {
     "src_ip": "10.0.0.1",
-    "src_port": 45576,
+    "src_port": 34294,
     "dst_ip": "10.3.0.1",
     "dst_port": 5001,
-    "start_time_us": 1776062556019960,
-    "stop_time_us": 1776062564389339,
-    "fct_us": 8369379,
-    "size_bytes": 6156790,
+    "start_time_us": 1776424613442059,
+    "stop_time_us": 1776424622304806,
+    "fct_us": 8862747,
+    "size_bytes": 9033446,
     "dscp": 0,
     "rate_mbps": 0
   },
-  "features": {
-    "packet_count": 8,
-    "total_frame_bytes": 528,
-    "total_tcp_payload_bytes": 0,
-    "mean_frame_len": 66.0,
-    "min_frame_len": 66,
-    "max_frame_len": 66,
-    "flow_duration_us": 11649,
-    "mean_iat_us": 1664.142857142857,
-    "min_iat_us": 645,
-    "max_iat_us": 3826,
-    "retransmission_count": 0,
-    "duplicate_ack_count": 0,
-    "out_of_order_count": 0,
-    "fast_retransmission_count": 0
-  }
+  "packets": [
+    {
+      "packet_index": 0,
+      "frame_len": 66,
+      "ip_len": 52,
+      "ip_ttl": 64,
+      "tcp_payload_bytes": 0,
+      "tcp_flags": "0x0010",
+      "tcp_window_size": 1152,
+      "iat_us": 0,
+      "retransmission": 0,
+      "out_of_order": 0,
+      "duplicate_ack": 0,
+      "fast_retransmission": 0
+    },
+    {
+      "packet_index": 1,
+      "frame_len": 66,
+      "ip_len": 52,
+      "ip_ttl": 64,
+      "tcp_payload_bytes": 0,
+      "tcp_flags": "0x0010",
+      "tcp_window_size": 1152,
+      "iat_us": 2219,
+      "retransmission": 0,
+      "out_of_order": 0,
+      "duplicate_ack": 0,
+      "fast_retransmission": 0
+    }
+  ]
 }
+
 ```
 
 ### 실행 방법
@@ -749,22 +763,22 @@ python3 -m feature_pipeline.pipeline
 - 패킷 로딩 (`pcap` + `tshark`)
 - 메타 기반 요청/방향 매칭
 - 방향별 `FlowCache` 누적
-- 초기 `n`개 패킷 feature 계산
-- JSON `FlowRequest` payload 생성
+- 초기 n개 패킷 기반 packet sequence 생성
+- JSON payload 생성
 - 단계별 테스트 스크립트를 통한 동작 검증
 
 즉 Redis 연동 직전 단계까지 완료된 상태이며, 이후 필요 시 Redis stream 또는 pub/sub 기반 inference pipeline으로 확장할 수 있다.
 ### 추가 고려 사항
-현재 구현은 요청 단위 및 방향별 logical flow 단위로부터 기본 통계 feature를 안정적으로 추출하는 데 초점을 맞추고 있다. 따라서 패킷 길이, TCP payload 크기, 패킷 간 시간 간격(IAT), 재전송 관련 정보 등 다양한 feature를 계산할 수 있는 상태까지는 도달하였다.
+현재 구현은 요청 단위 및 방향별 logical flow 단위에서 packet sequence를 안정적으로 생성하는 데 초점을 맞추고 있다. 따라서 각 패킷의 길이, TCP payload 크기, 패킷 간 시간 간격(IAT), 재전송 관련 정보 등을 순서대로 보존한 입력을 생성할 수 있는 상태까지 도달하였다.
 
-다만, 현재 단계에서는 "어떤 feature를 최종적으로 모델 입력으로 사용할 것인가"에 대한 선택까지는 확정하지 않았다. 즉 feature 추출 파이프라인 자체는 구현되었지만, 실제 분류 모델 학습 단계에서는 아래 사항을 추가로 논의할 필요가 있다.
+다만, 현재 단계에서는 “어떤 packet-level feature를 최종적으로 모델 입력으로 사용할 것인가”에 대한 선택까지는 확정하지 않았다. 즉 packet sequence 추출 파이프라인 자체는 구현되었지만, 실제 분류 모델 학습 단계에서는 아래 사항을 추가로 논의할 필요가 있다.
 
-- 현재 추출한 feature 중 어떤 항목을 최종 입력 feature로 사용할지
-- ACK-only 패킷 기반 feature를 포함할지 여부
+- 현재 추출한 packet-level feature 중 어떤 항목을 최종 입력으로 사용할지
+- ACK-only 패킷 기반 입력을 포함할지 여부
 - `tcp_len > 0`인 payload packet 위주로 feature를 제한할지 여부
 - `src_to_dst`와 `dst_to_src`를 모두 학습에 사용할지, 혹은 한 방향만 사용할지
 - direction별로 서로 다른 feature 구성을 적용할지 여부
 
-즉 현재 결과는 "모델 학습에 사용할 수 있는 feature를 추출할 수 있는 기반을 마련한 상태"로 볼 수 있으며, 이후 feature selection 및 입력 정책을 구체화해야 한다.
+즉 현재 결과는 “모델 학습에 사용할 수 있는 packet sequence 입력을 생성할 수 있는 기반을 마련한 상태”로 볼 수 있으며, 이후 feature selection 및 입력 정책을 구체화해야 한다.
 
-또한 현재 구현은 실험 종료 후 생성된 `pcap` 파일을 다시 읽어 feature를 추출하는 오프라인 후처리 방식이다. 이 구조는 각 단계의 동작을 독립적으로 검증하고 디버깅하기에는 유리하다. 이후 시스템 통합 단계에서는 `tshark` 출력 또는 캡처 결과를 실시간으로 feature pipeline에 연결하여, 패킷 수집 → 요청 매칭 → feature 생성 → Redis 전송이 하나의 연속된 흐름으로 동작하도록 확장할 수 있다.
+또한 현재 구현은 실험 종료 후 생성된 pcap 파일을 다시 읽어 packet sequence를 추출하는 오프라인 후처리 방식이다. 이 구조는 각 단계의 동작을 독립적으로 검증하고 디버깅하기에는 유리하다. 이후 시스템 통합 단계에서는 tshark 출력 또는 캡처 결과를 실시간으로 feature_pipeline에 연결하여, 패킷 수집 → 요청 매칭 → packet sequence 생성 → Redis 전송이 하나의 연속된 흐름으로 동작하도록 확장할 수 있다.
