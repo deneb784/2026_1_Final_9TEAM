@@ -589,12 +589,12 @@ csv_results/
 
 ## 11. Feature Pipeline (`feature_pipeline/`)
 
-`feature_pipeline는 실험 종료 후 생성된 요청 메타데이터와 패킷 캡처 파일을 입력으로 받아, 요청 단위 및 방향별 logical flow 단위의 packet-level sequence를 추출하는 후처리 파이프라인이다.
+`feature_pipeline`는 실험 종료 후 생성된 요청 메타데이터와 패킷 캡처 파일을 입력으로 받아, 요청 단위 및 방향별 logical flow 단위의 packet-level sequence를 추출하는 후처리 파이프라인이다.
 
 ### 배경
-패킷 기반 정보를 요청 단위로 추출하려면 각 패킷이 어떤 요청에 속하는지 식별할 수 있어야 한다. 본 실험 환경에서는 동일한 src/dst ip:port 조합이 여러 요청에서 반복될 수 있으므로, 요청 메타데이터(flows_*_meta.csv)와 시간 구간 정보를 함께 사용하여 요청 단위 매칭을 수행한다.
+패킷 기반 정보를 요청 단위로 추출하려면 각 패킷이 어떤 요청에 속하는지 식별할 수 있어야 한다. 본 실험 환경에서는 동일한 src/dst ip:port 조합이 여러 요청에서 반복될 수 있으므로, 요청 메타데이터(`flows_*_meta.csv`)와 시간 구간 정보를 함께 사용하여 요청 단위 매칭을 수행한다.
 
-초기 구현에서는 방향별 flow에 누적된 패킷으로부터 평균, 합계 등의 통계 feature를 계산해 features 형태로 출력하였다. 이후 packet별 정보와 순서 정보를 보존하기 위해, 현재는 각 패킷의 feature를 그대로 유지한 packets sequence 형태로 출력하도록 구조를 변경하였다.
+초기 구현에서는 방향별 flow에 누적된 패킷으로부터 평균, 합계 등의 통계 feature를 계산해 `features` 형태로 출력하였다. 이후 packet별 정보와 순서 정보를 보존하기 위해, 현재는 각 패킷의 feature를 그대로 유지한 `packets` sequence 형태로 출력하도록 구조를 변경하였다.
 
 ### 입력
 - `results/flows_*_meta.csv`
@@ -610,11 +610,13 @@ csv_results/
 - `feature_pipeline/matcher.py`
   - 패킷의 `src/dst ip:port` 및 시간 구간을 이용해 패킷을 `(src_index, flow_id, direction)`에 매칭한다.
 - `feature_pipeline/flow_cache.py`
-  - 같은 방향의 패킷을 (src_index, flow_id, direction) 키로 누적하고, packet sequence 생성 가능 여부를 관리한다.
+  - 같은 방향의 패킷을 `(src_index, flow_id, direction)` 키로 누적하고, packet sequence 생성 가능 여부를 관리한다.
 - `feature_pipeline/feature_extractor.py`
   - 누적된 패킷 버퍼로부터 packet-level feature sequence를 생성한다.
 - `feature_pipeline/pipeline.py`
   - 전체 파이프라인을 실행하고 최종 JSON payload를 생성한다.
+- `feature_pipeline/dataset_builder.py`
+  - 방향별 flow 단위의 학습용 dataset을 생성한다. 전체 패킷을 방향별 flow로 끝까지 누적한 뒤, 초기 n개 패킷의 feature sequence를 입력 `x`로 구성하고, 해당 방향 flow의 전체 `tcp_len` 합을 기준으로 directional_size_bytes와 label을 생성해 `dataset.jsonl`로 저장한다.
 
 
 ### 메타데이터 기반 요청 식별
@@ -628,7 +630,7 @@ csv_results/
 - `dst_to_src`
 
 ### 패킷 매칭 방식
-패킷은 `tshark`를 통해 pcap으로부터 읽고, 다음 절차로 요청 메타 row에 매칭한다.
+패킷은 `tshark`를 통해 `pcap`으로부터 읽고, 다음 절차로 요청 메타 row에 매칭한다.
 
 1. 패킷의 `src/dst ip:port`를 기준으로 메타 인덱스에서 후보 요청을 찾는다.
 2. 정방향 비교:
@@ -648,8 +650,18 @@ csv_results/
 3. `captured_packet/*.pcap`를 `tshark`로 읽어 `PacketRecord` 객체로 변환한다.
 4. 각 패킷을 메타와 비교하여 `(src_index, flow_id, direction)`에 매칭한다.
 5. 같은 방향의 패킷을 `FlowCache`에 누적한다.
-6. 지정한 개수(feature_packet_count)의 패킷이 모이면 packet sequence를 구성한다.
+6. 지정한 개수(`feature_packet_count`)의 패킷이 모이면 packet sequence를 구성한다.
 7. 결과를 JSON payload로 생성한다.
+
+### 학습용 Dataset 생성
+`dataset_builder.py`는 feature_pipeline에서 생성한 packet-level sequence 구조를 바탕으로, 모델 학습에 사용할 수 있는 dataset을 구성하는 후처리 모듈이다. 이 모듈은 모든 패킷을 메타데이터와 매칭한 뒤 `(src_index, flow_id, direction)` 기준의 방향별 flow로 누적한다. 이후 각 방향별 flow에 대해 다음 정보를 생성한다.
+
+- flow_key: `(src_index, flow_id, direction)` 형태의 방향별 flow 식별자
+- x: 초기 `packet_count`개 패킷의 feature sequence
+- directional_size_bytes: 해당 방향 flow 전체의 `tcp_len` 합
+- label: directional_size_bytes와 2,000,000 bytes threshold를 비교해 생성한 mice/elephant 라벨
+  
+즉 `feature_pipeline.pipeline`이 packet sequence JSON payload를 생성하는 역할이라면, `dataset_builder.py`는 이를 학습용 sample 구조로 변환해 `dataset.jsonl` 형태로 저장하는 역할을 수행한다.
 
 ### FlowCache 구조
 `FlowCache`는 같은 방향 패킷만 하나의 버퍼에 누적한다. 캐시 키는 다음과 같다.
@@ -663,7 +675,7 @@ csv_results/
 두 개의 방향별 flow entry가 존재할 수 있다.
 
 ### Packet Sequence 생성 방식
-패킷이 요청 및 방향별 logical flow에 매칭되면, 해당 패킷은 FlowCache에 누적된다. 같은 방향의 패킷이 feature_packet_count개 모이면, 그 시점까지의 패킷 버퍼를 기반으로 packet sequence를 생성한다.
+패킷이 요청 및 방향별 logical flow에 매칭되면, 해당 패킷은 FlowCache에 누적된다. 같은 방향의 패킷이 `feature_packet_count`개 모이면, 그 시점까지의 패킷 버퍼를 기반으로 packet sequence를 생성한다.
 
 현재 구현은 각 패킷에 대해 다음과 같은 packet-level feature를 유지한다.
 - `frame_len`
@@ -737,6 +749,26 @@ csv_results/
 
 ```
 
+### 학습용 Dataset 포맷
+`dataset_builder.py`가 생성하는 학습용 dataset sample은 다음과 같은 구조를 가진다.
+
+```json
+{
+  "flow_key": {
+    "src_index": 0,
+    "flow_id": 19,
+    "direction": "src_to_dst"
+  },
+  "x": [
+    [66, 52, 64, 0, 16, 1152, 0, 0, 0, 0, 0],
+    [66, 52, 64, 0, 16, 1152, 2219, 0, 0, 0, 0]
+  ],
+  "directional_size_bytes": 3199399,
+  "label": 1
+}
+```
+여기서 `x`는 packet sequence 입력이며, `label`은 방향별 flow 전체 payload 크기를 기준으로 생성된다.
+
 ### 실행 방법
 먼저 실험을 수행하여 `results/flows_*_meta.csv`와 `captured_packet/*.pcap`를 생성한다.
 
@@ -756,6 +788,11 @@ sudo chown -R $USER:$USER captured_packet results
 python3 -m feature_pipeline.pipeline
 ```
 
+```bash
+python3 -m feature_pipeline.dataset_builder
+```
+해당 명령은 `results/flows_*_meta.csv`와 `captured_packet/*.pcap`를 읽어 학습용 `dataset.jsonl`을 생성한다.
+
 ### 현재 상태
 현재 파이프라인은 다음 단계까지 구현 및 검증되었다.
 
@@ -765,7 +802,10 @@ python3 -m feature_pipeline.pipeline
 - 방향별 `FlowCache` 누적
 - 초기 n개 패킷 기반 packet sequence 생성
 - JSON payload 생성
-- 단계별 테스트 스크립트를 통한 동작 검증
+- 방향별 flow 기준 학습용 `dataset.jsonl` 생성
+- `dataset_builder.py`를 통한 flow_key, x, directional_size_bytes, label 구성
+- packet sequence 기반 모델 학습 입력 생성
+
 
 즉 Redis 연동 직전 단계까지 완료된 상태이며, 이후 필요 시 Redis stream 또는 pub/sub 기반 inference pipeline으로 확장할 수 있다.
 ### 추가 고려 사항
