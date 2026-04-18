@@ -84,7 +84,7 @@ def run_dataset_builder(
     results_dir: str = "results",
     pcap_dir: str = "captured_packet",
     packet_count: int = 8,
-    label_threshold: int = 100000,
+    label_threshold: int = 2000000,
     direction_filter: str | None = None,
 ) -> list[dict]:
     all_metas = load_all_request_meta(results_dir)
