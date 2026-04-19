@@ -45,7 +45,7 @@ def serialize_flow_request(flow_request: dict) -> str:
 def run_pipeline(
     results_dir: str = "results",
     pcap_dir: str = "captured_packet",
-    feature_packet_count: int = 8,
+    feature_packet_count: int = 10,
 ) -> tuple[list[dict], list[str]]:
     all_metas = load_all_request_meta(results_dir)
     meta_index = build_meta_index(all_metas)
@@ -82,7 +82,7 @@ if __name__ == "__main__":
     flow_requests, flow_request_jsons = run_pipeline(
         results_dir="results",
         pcap_dir="captured_packet",
-        feature_packet_count=8,
+        feature_packet_count=10,
     )
 
     print(f"generated {len(flow_requests)} flow requests")
