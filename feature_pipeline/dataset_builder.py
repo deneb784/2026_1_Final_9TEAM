@@ -83,7 +83,7 @@ def build_dataset_sample(
 def run_dataset_builder(
     results_dir: str = "results",
     pcap_dir: str = "captured_packet",
-    packet_count: int = 8,
+    packet_count: int = 10,
     label_threshold: int = 2000000,
     direction_filter: str | None = None,
 ) -> list[dict]:
@@ -136,7 +136,7 @@ if __name__ == "__main__":
     samples = run_dataset_builder(
         results_dir="results",
         pcap_dir="captured_packet",
-        packet_count=8,
+        packet_count=10,
         label_threshold=2000000,
         direction_filter=None,  # src_to_dst, dst_to_src 모두 포함
     )
