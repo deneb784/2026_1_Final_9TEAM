@@ -6,17 +6,15 @@ from feature_pipeline.meta_loader import load_all_request_meta, build_meta_index
 from feature_pipeline.packet_loader import iter_packets_from_pcap
 from feature_pipeline.matcher import match_packet
 from feature_pipeline.flow_cache import FlowCache
-from feature_pipeline.feature_extractor import compute_features
+from feature_pipeline.feature_extractor import build_packet_features
 
 
 def find_pcap_files(pcap_dir: str | Path) -> list[str]:
-    """지정한 디렉터리 아래의 pcap 파일 목록을 찾는다."""
     pattern = str(Path(pcap_dir) / "*.pcap")
     return sorted(glob(pattern))
 
 
-def build_flow_request(meta, entry, features: dict) -> dict:
-    """요청 메타와 계산된 feature를 합쳐 최종 payload를 생성한다."""
+def build_flow_request(meta, entry, packets: list[dict]) -> dict:
     return {
         "request_key": {
             "src_index": meta.src_index,
@@ -36,21 +34,19 @@ def build_flow_request(meta, entry, features: dict) -> dict:
             "dscp": meta.dscp,
             "rate_mbps": meta.rate_mbps,
         },
-        "features": features,
+        "packets": packets,
     }
 
 
 def serialize_flow_request(flow_request: dict) -> str:
-    """FlowRequest payload를 JSON 문자열로 직렬화한다."""
     return json.dumps(flow_request, ensure_ascii=False)
 
 
 def run_pipeline(
     results_dir: str = "results",
     pcap_dir: str = "captured_packet",
-    feature_packet_count: int = 8,
+    feature_packet_count: int = 10,
 ) -> tuple[list[dict], list[str]]:
-    """메타 로딩부터 feature 추출, JSON payload 생성까지 전체 파이프라인을 수행한다."""
     all_metas = load_all_request_meta(results_dir)
     meta_index = build_meta_index(all_metas)
     flow_cache = FlowCache(feature_packet_count=feature_packet_count)
@@ -70,14 +66,13 @@ def run_pipeline(
             entry = flow_cache.add_packet(meta, direction, packet)
 
             if flow_cache.is_ready(entry):
-                features = compute_features(entry)
-                flow_request = build_flow_request(meta, entry, features)
+                packet_features = build_packet_features(entry)
+                flow_request = build_flow_request(meta, entry, packet_features)
                 flow_request_json = serialize_flow_request(flow_request)
 
                 flow_requests.append(flow_request)
                 flow_request_jsons.append(flow_request_json)
 
-                # 같은 flow에 대해 중복으로 feature를 생성하지 않도록 상태를 갱신한다.
                 flow_cache.mark_feature_sent(entry)
 
     return flow_requests, flow_request_jsons
@@ -87,11 +82,10 @@ if __name__ == "__main__":
     flow_requests, flow_request_jsons = run_pipeline(
         results_dir="results",
         pcap_dir="captured_packet",
-        feature_packet_count=8,
+        feature_packet_count=10,
     )
 
     print(f"generated {len(flow_requests)} flow requests")
 
     for req_json in flow_request_jsons[:3]:
         print(req_json)
-

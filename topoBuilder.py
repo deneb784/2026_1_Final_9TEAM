@@ -13,9 +13,9 @@ def fatTreeBuilder(k=4):
         - Host 계층: 각 Edge 스위치마다 2개의 호스트 (총 16개)
         
     링크 대역폭:
-        - Host <-> Edge: 100 Mbps
-        - Edge <-> Aggregation: 100 Mbps
-        - Aggregation <-> Core: 100 Mbps
+        - Host <-> Edge: 50 Mbps
+        - Edge <-> Aggregation: 50 Mbps
+        - Aggregation <-> Core: 50 Mbps
     """
 
     class FatTreeTopo(Topo):
@@ -35,7 +35,7 @@ def fatTreeBuilder(k=4):
                 self.core_switches.append(
                     self.addSwitch('core%s' % i,
                                    dpid='%016x' % i,
-                                   protocols='OpenFlow13',
+                                   protocols='OpenFlow13,OpenFlow15',
                                    failMode='secure')
                 )
 
@@ -68,7 +68,7 @@ def fatTreeBuilder(k=4):
                     agg_dpid = 100 + p * sw_per_pod + a + 1
                     pod_agg.append(self.addSwitch(agg_name,
                                                   dpid='%016x' % agg_dpid,
-                                                  protocols='OpenFlow13',
+                                                  protocols='OpenFlow13,OpenFlow15',
                                                   failMode='secure'))
                     self.agg_switches.append(agg_name)
 
@@ -79,7 +79,7 @@ def fatTreeBuilder(k=4):
                     edge_dpid = 200 + p * sw_per_pod + e + 1
                     pod_edge.append(self.addSwitch(edge_name,
                                                    dpid='%016x' % edge_dpid,
-                                                   protocols='OpenFlow13',
+                                                   protocols='OpenFlow13,OpenFlow15',
                                                    failMode='secure'))
                     self.edge_switches.append(edge_name)
 
@@ -94,20 +94,20 @@ def fatTreeBuilder(k=4):
                         self.host_list.append(host)
 
                         # Host <-> Edge 링크 (100 Mbps)
-                        self.addLink(host, edge_name, bw=100)
+                        self.addLink(host, edge_name, bw=50)
                         host_counter += 1
 
                 # 3. Pod 내부 스위치 간 연결: Aggregation <-> Edge (Full Mesh)
                 for agg in pod_agg:
                     for edge in pod_edge:
-                        self.addLink(agg, edge, bw=100)
+                        self.addLink(agg, edge, bw=50)
 
                 # 4. Pod <-> Core 연결: Aggregation <-> Core
                 # 각 Pod의 i번째 Aggregation 스위치는 core_matrix의 i번째 행에 있는 모든 Core 스위치와 연결됨
                 for a in range(sw_per_pod):
                     for c in range(k // 2):
                         core_sw = core_matrix[a][c]
-                        self.addLink(pod_agg[a], core_sw, bw=100)
+                        self.addLink(pod_agg[a], core_sw, bw=50)
 
     # 토폴로지 객체 생성
     topology = FatTreeTopo(k=k)
