@@ -6,3 +6,8 @@ __pycache__/
 .codex
 PRIVATE_ROLE_PLAN.md
 RULE_ECMP_RYU_EXPLANATION.md
+FLOW_OVERRIDE_DESIGN.md
+REAL_ENV_POSITION.md
+univ1_trace/
+*.pdf
+*.tgz

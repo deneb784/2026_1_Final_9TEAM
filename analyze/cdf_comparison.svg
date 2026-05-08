@@ -1,0 +1,256 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="1440" viewBox="0 0 1180 1440">
+<style>
+text { font-family: Arial, sans-serif; fill: #222; }
+.title { font-size: 20px; font-weight: 700; }
+.label { font-size: 13px; }
+.tick { font-size: 11px; fill: #555; }
+.axis { stroke: #333; stroke-width: 1; }
+.grid { stroke: #ddd; stroke-width: 1; }
+.plot-bg { fill: #fff; stroke: #ccc; }
+</style>
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="40" y="34" class="title">DCTCP CDF vs UNI1 CDF</text>
+<text x="80" y="62" class="title">Raw bytes, linear x-axis</text>
+<rect x="80" y="80" width="1020" height="250" class="plot-bg"/>
+<line x1="80" y1="330" x2="1100" y2="330" class="axis"/>
+<line x1="80" y1="80" x2="80" y2="330" class="axis"/>
+<line x1="80" y1="330.0" x2="1100" y2="330.0" class="grid"/>
+<text x="70" y="334.0" class="tick" text-anchor="end">0</text>
+<line x1="80" y1="267.5" x2="1100" y2="267.5" class="grid"/>
+<text x="70" y="271.5" class="tick" text-anchor="end">0.25</text>
+<line x1="80" y1="205.0" x2="1100" y2="205.0" class="grid"/>
+<text x="70" y="209.0" class="tick" text-anchor="end">0.5</text>
+<line x1="80" y1="142.5" x2="1100" y2="142.5" class="grid"/>
+<text x="70" y="146.5" class="tick" text-anchor="end">0.75</text>
+<line x1="80" y1="80.0" x2="1100" y2="80.0" class="grid"/>
+<text x="70" y="84.0" class="tick" text-anchor="end">1</text>
+<line x1="80.0" y1="330" x2="80.0" y2="335" class="axis"/>
+<text x="80.0" y="352" class="tick" text-anchor="middle">0</text>
+<line x1="335.0" y1="330" x2="335.0" y2="335" class="axis"/>
+<text x="335.0" y="352" class="tick" text-anchor="middle">170.692M</text>
+<line x1="590.0" y1="330" x2="590.0" y2="335" class="axis"/>
+<text x="590.0" y="352" class="tick" text-anchor="middle">341.385M</text>
+<line x1="845.0" y1="330" x2="845.0" y2="335" class="axis"/>
+<text x="845.0" y="352" class="tick" text-anchor="middle">512.077M</text>
+<line x1="1100.0" y1="330" x2="1100.0" y2="335" class="axis"/>
+<text x="1100.0" y="352" class="tick" text-anchor="middle">682.769M</text>
+<text x="590.0" y="378" class="label" text-anchor="middle">Flow size bytes</text>
+<text x="35" y="205.0" class="label" text-anchor="middle" transform="rotate(-90 35 205.0)">CDF</text>
+<polyline points="80.00,330.00 80.01,292.50 80.03,280.00 80.04,255.00 80.07,230.00 80.12,197.50 80.30,180.00 81.49,155.00 82.99,130.00 87.47,105.00 94.94,87.50 124.82,80.00" fill="none" stroke="#1f77b4" stroke-width="2.5"/>
+<circle cx="80.0" cy="330.0" r="3" fill="#1f77b4"><title>DCTCP 0 bytes, cdf=0</title></circle>
+<circle cx="80.01493916333304" cy="292.5" r="3" fill="#1f77b4"><title>DCTCP 10K bytes, cdf=0.15</title></circle>
+<circle cx="80.02987832666608" cy="280.0" r="3" fill="#1f77b4"><title>DCTCP 20K bytes, cdf=0.2</title></circle>
+<circle cx="80.0448174899991" cy="255.0" r="3" fill="#1f77b4"><title>DCTCP 30K bytes, cdf=0.3</title></circle>
+<circle cx="80.07469581666518" cy="230.0" r="3" fill="#1f77b4"><title>DCTCP 50K bytes, cdf=0.4</title></circle>
+<circle cx="80.11951330666429" cy="197.5" r="3" fill="#1f77b4"><title>DCTCP 80K bytes, cdf=0.53</title></circle>
+<circle cx="80.29878326666072" cy="180.0" r="3" fill="#1f77b4"><title>DCTCP 200K bytes, cdf=0.6</title></circle>
+<circle cx="81.49391633330363" cy="155.0" r="3" fill="#1f77b4"><title>DCTCP 1M bytes, cdf=0.7</title></circle>
+<circle cx="82.98783266660726" cy="130.0" r="3" fill="#1f77b4"><title>DCTCP 2M bytes, cdf=0.8</title></circle>
+<circle cx="87.46958166651815" cy="105.0" r="3" fill="#1f77b4"><title>DCTCP 5M bytes, cdf=0.9</title></circle>
+<circle cx="94.9391633330363" cy="87.5" r="3" fill="#1f77b4"><title>DCTCP 10M bytes, cdf=0.97</title></circle>
+<circle cx="124.81748999910891" cy="80.0" r="3" fill="#1f77b4"><title>DCTCP 30M bytes, cdf=1</title></circle>
+<polyline points="80.00,330.00 80.00,330.00 80.00,327.50 80.00,317.50 80.00,305.00 80.00,280.00 80.00,255.00 80.00,230.00 80.01,205.00 80.02,180.00 80.02,155.00 80.02,130.00 80.06,105.00 80.14,92.50 80.23,87.50 80.64,82.50 81.49,81.25 85.44,80.25 1100.00,80.00" fill="none" stroke="#d62728" stroke-width="2.5"/>
+<circle cx="80.0" cy="330.0" r="3" fill="#d62728"><title>UNI1 0 bytes, cdf=0</title></circle>
+<circle cx="80.00000149391633" cy="330.0" r="3" fill="#d62728"><title>UNI1 1 bytes, cdf=0</title></circle>
+<circle cx="80.000008963498" cy="327.5" r="3" fill="#d62728"><title>UNI1 6 bytes, cdf=0.01</title></circle>
+<circle cx="80.00069616501132" cy="317.5" r="3" fill="#d62728"><title>UNI1 466 bytes, cdf=0.05</title></circle>
+<circle cx="80.00110997983565" cy="305.0" r="3" fill="#d62728"><title>UNI1 743 bytes, cdf=0.1</title></circle>
+<circle cx="80.00148345891897" cy="280.0" r="3" fill="#d62728"><title>UNI1 993 bytes, cdf=0.2</title></circle>
+<circle cx="80.0018793467473" cy="255.0" r="3" fill="#d62728"><title>UNI1 1.258K bytes, cdf=0.3</title></circle>
+<circle cx="80.00286831935995" cy="230.0" r="3" fill="#d62728"><title>UNI1 1.92K bytes, cdf=0.4</title></circle>
+<circle cx="80.0063745409942" cy="205.0" r="3" fill="#d62728"><title>UNI1 4.267K bytes, cdf=0.5</title></circle>
+<circle cx="80.01551133328869" cy="180.0" r="3" fill="#d62728"><title>UNI1 10.383K bytes, cdf=0.6</title></circle>
+<circle cx="80.01683494315999" cy="155.0" r="3" fill="#d62728"><title>UNI1 11.269K bytes, cdf=0.7</title></circle>
+<circle cx="80.0196838416076" cy="130.0" r="3" fill="#d62728"><title>UNI1 13.176K bytes, cdf=0.8</title></circle>
+<circle cx="80.05761736514286" cy="105.0" r="3" fill="#d62728"><title>UNI1 38.568K bytes, cdf=0.9</title></circle>
+<circle cx="80.14306788549149" cy="92.50000000000001" r="3" fill="#d62728"><title>UNI1 95.767K bytes, cdf=0.95</title></circle>
+<circle cx="80.22963734917377" cy="87.5" r="3" fill="#d62728"><title>UNI1 153.715K bytes, cdf=0.97</title></circle>
+<circle cx="80.6418477073569" cy="82.5" r="3" fill="#d62728"><title>UNI1 429.641K bytes, cdf=0.99</title></circle>
+<circle cx="81.49019498771737" cy="81.25" r="3" fill="#d62728"><title>UNI1 997.509K bytes, cdf=0.995</title></circle>
+<circle cx="85.44258818016912" cy="80.25" r="3" fill="#d62728"><title>UNI1 3.64317M bytes, cdf=0.999</title></circle>
+<circle cx="1100.0" cy="80.0" r="3" fill="#d62728"><title>UNI1 682.769M bytes, cdf=1</title></circle>
+<text x="80" y="412" class="title">Raw bytes, log x-axis</text>
+<rect x="80" y="430" width="1020" height="250" class="plot-bg"/>
+<line x1="80" y1="680" x2="1100" y2="680" class="axis"/>
+<line x1="80" y1="430" x2="80" y2="680" class="axis"/>
+<line x1="80" y1="680.0" x2="1100" y2="680.0" class="grid"/>
+<text x="70" y="684.0" class="tick" text-anchor="end">0</text>
+<line x1="80" y1="617.5" x2="1100" y2="617.5" class="grid"/>
+<text x="70" y="621.5" class="tick" text-anchor="end">0.25</text>
+<line x1="80" y1="555.0" x2="1100" y2="555.0" class="grid"/>
+<text x="70" y="559.0" class="tick" text-anchor="end">0.5</text>
+<line x1="80" y1="492.5" x2="1100" y2="492.5" class="grid"/>
+<text x="70" y="496.5" class="tick" text-anchor="end">0.75</text>
+<line x1="80" y1="430.0" x2="1100" y2="430.0" class="grid"/>
+<text x="70" y="434.0" class="tick" text-anchor="end">1</text>
+<line x1="80.0" y1="680" x2="80.0" y2="685" class="axis"/>
+<text x="80.0" y="702" class="tick" text-anchor="middle">1</text>
+<line x1="195.45940413216238" y1="680" x2="195.45940413216238" y2="685" class="axis"/>
+<text x="195.45940413216238" y="702" class="tick" text-anchor="middle">10</text>
+<line x1="310.91880826432475" y1="680" x2="310.91880826432475" y2="685" class="axis"/>
+<text x="310.91880826432475" y="702" class="tick" text-anchor="middle">100</text>
+<line x1="426.3782123964872" y1="680" x2="426.3782123964872" y2="685" class="axis"/>
+<text x="426.3782123964872" y="702" class="tick" text-anchor="middle">1K</text>
+<line x1="541.8376165286495" y1="680" x2="541.8376165286495" y2="685" class="axis"/>
+<text x="541.8376165286495" y="702" class="tick" text-anchor="middle">10K</text>
+<line x1="657.2970206608119" y1="680" x2="657.2970206608119" y2="685" class="axis"/>
+<text x="657.2970206608119" y="702" class="tick" text-anchor="middle">100K</text>
+<line x1="772.7564247929744" y1="680" x2="772.7564247929744" y2="685" class="axis"/>
+<text x="772.7564247929744" y="702" class="tick" text-anchor="middle">1M</text>
+<line x1="888.2158289251366" y1="680" x2="888.2158289251366" y2="685" class="axis"/>
+<text x="888.2158289251366" y="702" class="tick" text-anchor="middle">10M</text>
+<line x1="1003.675233057299" y1="680" x2="1003.675233057299" y2="685" class="axis"/>
+<text x="1003.675233057299" y="702" class="tick" text-anchor="middle">100M</text>
+<text x="590.0" y="728" class="label" text-anchor="middle">Flow size bytes</text>
+<text x="35" y="555.0" class="label" text-anchor="middle" transform="rotate(-90 35 555.0)">CDF</text>
+<polyline points="541.84,642.50 576.59,630.00 596.93,605.00 622.54,580.00 646.11,547.50 692.05,530.00 772.76,505.00 807.51,480.00 853.46,455.00 888.22,437.50 943.30,430.00" fill="none" stroke="#1f77b4" stroke-width="2.5"/>
+<circle cx="541.8376165286495" cy="642.5" r="3" fill="#1f77b4"><title>DCTCP 10K bytes, cdf=0.15</title></circle>
+<circle cx="576.5943604539202" cy="630.0" r="3" fill="#1f77b4"><title>DCTCP 20K bytes, cdf=0.2</title></circle>
+<circle cx="596.9257522973714" cy="605.0" r="3" fill="#1f77b4"><title>DCTCP 30K bytes, cdf=0.3</title></circle>
+<circle cx="622.5402767355412" cy="580.0" r="3" fill="#1f77b4"><title>DCTCP 50K bytes, cdf=0.4</title></circle>
+<circle cx="646.1078483044616" cy="547.5" r="3" fill="#1f77b4"><title>DCTCP 80K bytes, cdf=0.53</title></circle>
+<circle cx="692.0537645860826" cy="530.0" r="3" fill="#1f77b4"><title>DCTCP 200K bytes, cdf=0.6</title></circle>
+<circle cx="772.7564247929744" cy="505.0" r="3" fill="#1f77b4"><title>DCTCP 1M bytes, cdf=0.7</title></circle>
+<circle cx="807.513168718245" cy="480.0" r="3" fill="#1f77b4"><title>DCTCP 2M bytes, cdf=0.8</title></circle>
+<circle cx="853.4590849998659" cy="455.0" r="3" fill="#1f77b4"><title>DCTCP 5M bytes, cdf=0.9</title></circle>
+<circle cx="888.2158289251366" cy="437.5" r="3" fill="#1f77b4"><title>DCTCP 10M bytes, cdf=0.97</title></circle>
+<circle cx="943.3039646938586" cy="430.0" r="3" fill="#1f77b4"><title>DCTCP 30M bytes, cdf=1</title></circle>
+<polyline points="80.00,680.00 169.84,677.50 388.09,667.50 411.48,655.00 426.03,630.00 437.89,605.00 459.09,580.00 499.13,555.00 543.72,530.00 547.83,505.00 555.67,480.00 609.52,455.00 655.13,442.50 678.86,437.50 730.40,432.50 772.63,431.25 837.58,430.25 1100.00,430.00" fill="none" stroke="#d62728" stroke-width="2.5"/>
+<circle cx="80.0" cy="680.0" r="3" fill="#d62728"><title>UNI1 1 bytes, cdf=0</title></circle>
+<circle cx="169.8448796939926" cy="677.5" r="3" fill="#d62728"><title>UNI1 6 bytes, cdf=0.01</title></circle>
+<circle cx="388.0902479356813" cy="667.5" r="3" fill="#d62728"><title>UNI1 466 bytes, cdf=0.05</title></circle>
+<circle cx="411.4826577068998" cy="655.0" r="3" fill="#d62728"><title>UNI1 743 bytes, cdf=0.1</title></circle>
+<circle cx="426.02597444560854" cy="630.0" r="3" fill="#d62728"><title>UNI1 993 bytes, cdf=0.2</title></circle>
+<circle cx="437.8872798224731" cy="605.0" r="3" fill="#d62728"><title>UNI1 1.258K bytes, cdf=0.3</title></circle>
+<circle cx="459.0880034525085" cy="580.0" r="3" fill="#d62728"><title>UNI1 1.92K bytes, cdf=0.4</title></circle>
+<circle cx="499.13179727120666" cy="555.0" r="3" fill="#d62728"><title>UNI1 4.267K bytes, cdf=0.5</title></circle>
+<circle cx="543.7222435268179" cy="530.0" r="3" fill="#d62728"><title>UNI1 10.383K bytes, cdf=0.6</title></circle>
+<circle cx="547.8282714584457" cy="505.0" r="3" fill="#d62728"><title>UNI1 11.269K bytes, cdf=0.7</title></circle>
+<circle cx="555.6677580116927" cy="480.0" r="3" fill="#d62728"><title>UNI1 13.176K bytes, cdf=0.8</title></circle>
+<circle cx="609.5230503138819" cy="455.0" r="3" fill="#d62728"><title>UNI1 38.568K bytes, cdf=0.9</title></circle>
+<circle cx="655.1282176945364" cy="442.5" r="3" fill="#d62728"><title>UNI1 95.767K bytes, cdf=0.95</title></circle>
+<circle cx="678.855167559305" cy="437.5" r="3" fill="#d62728"><title>UNI1 153.715K bytes, cdf=0.97</title></circle>
+<circle cx="730.3950296996514" cy="432.5" r="3" fill="#d62728"><title>UNI1 429.641K bytes, cdf=0.99</title></circle>
+<circle cx="772.6313617974567" cy="431.25" r="3" fill="#d62728"><title>UNI1 997.509K bytes, cdf=0.995</title></circle>
+<circle cx="837.5844784999015" cy="430.25" r="3" fill="#d62728"><title>UNI1 3.64317M bytes, cdf=0.999</title></circle>
+<circle cx="1100.0" cy="430.0" r="3" fill="#d62728"><title>UNI1 682.769M bytes, cdf=1</title></circle>
+<text x="80" y="762" class="title">Normalized by max, linear x-axis</text>
+<rect x="80" y="780" width="1020" height="250" class="plot-bg"/>
+<line x1="80" y1="1030" x2="1100" y2="1030" class="axis"/>
+<line x1="80" y1="780" x2="80" y2="1030" class="axis"/>
+<line x1="80" y1="1030.0" x2="1100" y2="1030.0" class="grid"/>
+<text x="70" y="1034.0" class="tick" text-anchor="end">0</text>
+<line x1="80" y1="967.5" x2="1100" y2="967.5" class="grid"/>
+<text x="70" y="971.5" class="tick" text-anchor="end">0.25</text>
+<line x1="80" y1="905.0" x2="1100" y2="905.0" class="grid"/>
+<text x="70" y="909.0" class="tick" text-anchor="end">0.5</text>
+<line x1="80" y1="842.5" x2="1100" y2="842.5" class="grid"/>
+<text x="70" y="846.5" class="tick" text-anchor="end">0.75</text>
+<line x1="80" y1="780.0" x2="1100" y2="780.0" class="grid"/>
+<text x="70" y="784.0" class="tick" text-anchor="end">1</text>
+<line x1="80.0" y1="1030" x2="80.0" y2="1035" class="axis"/>
+<text x="80.0" y="1052" class="tick" text-anchor="middle">0</text>
+<line x1="335.0" y1="1030" x2="335.0" y2="1035" class="axis"/>
+<text x="335.0" y="1052" class="tick" text-anchor="middle">0.25</text>
+<line x1="590.0" y1="1030" x2="590.0" y2="1035" class="axis"/>
+<text x="590.0" y="1052" class="tick" text-anchor="middle">0.5</text>
+<line x1="845.0" y1="1030" x2="845.0" y2="1035" class="axis"/>
+<text x="845.0" y="1052" class="tick" text-anchor="middle">0.75</text>
+<line x1="1100.0" y1="1030" x2="1100.0" y2="1035" class="axis"/>
+<text x="1100.0" y="1052" class="tick" text-anchor="middle">1</text>
+<text x="590.0" y="1078" class="label" text-anchor="middle">Normalized flow size, value / max</text>
+<text x="35" y="905.0" class="label" text-anchor="middle" transform="rotate(-90 35 905.0)">CDF</text>
+<polyline points="80.00,1030.00 80.34,992.50 80.68,980.00 81.02,955.00 81.70,930.00 82.72,897.50 86.80,880.00 114.00,855.00 148.00,830.00 250.00,805.00 420.00,787.50 1100.00,780.00" fill="none" stroke="#1f77b4" stroke-width="2.5"/>
+<circle cx="80.0" cy="1030.0" r="3" fill="#1f77b4"><title>DCTCP 0, cdf=0</title></circle>
+<circle cx="80.34" cy="992.5" r="3" fill="#1f77b4"><title>DCTCP 0.000333333, cdf=0.15</title></circle>
+<circle cx="80.68" cy="980.0" r="3" fill="#1f77b4"><title>DCTCP 0.000666667, cdf=0.2</title></circle>
+<circle cx="81.02" cy="955.0" r="3" fill="#1f77b4"><title>DCTCP 0.001, cdf=0.3</title></circle>
+<circle cx="81.7" cy="930.0" r="3" fill="#1f77b4"><title>DCTCP 0.00166667, cdf=0.4</title></circle>
+<circle cx="82.72" cy="897.5" r="3" fill="#1f77b4"><title>DCTCP 0.00266667, cdf=0.53</title></circle>
+<circle cx="86.8" cy="880.0" r="3" fill="#1f77b4"><title>DCTCP 0.00666667, cdf=0.6</title></circle>
+<circle cx="114.0" cy="855.0" r="3" fill="#1f77b4"><title>DCTCP 0.0333333, cdf=0.7</title></circle>
+<circle cx="148.0" cy="830.0" r="3" fill="#1f77b4"><title>DCTCP 0.0666667, cdf=0.8</title></circle>
+<circle cx="250.0" cy="805.0" r="3" fill="#1f77b4"><title>DCTCP 0.166667, cdf=0.9</title></circle>
+<circle cx="420.0" cy="787.5" r="3" fill="#1f77b4"><title>DCTCP 0.333333, cdf=0.97</title></circle>
+<circle cx="1100.0" cy="780.0" r="3" fill="#1f77b4"><title>DCTCP 1, cdf=1</title></circle>
+<polyline points="80.00,1030.00 80.00,1030.00 80.00,1027.50 80.00,1017.50 80.00,1005.00 80.00,980.00 80.00,955.00 80.00,930.00 80.01,905.00 80.02,880.00 80.02,855.00 80.02,830.00 80.06,805.00 80.14,792.50 80.23,787.50 80.64,782.50 81.49,781.25 85.44,780.25 1100.00,780.00" fill="none" stroke="#d62728" stroke-width="2.5"/>
+<circle cx="80.0" cy="1030.0" r="3" fill="#d62728"><title>UNI1 0, cdf=0</title></circle>
+<circle cx="80.00000149391633" cy="1030.0" r="3" fill="#d62728"><title>UNI1 1.46462e-09, cdf=0</title></circle>
+<circle cx="80.000008963498" cy="1027.5" r="3" fill="#d62728"><title>UNI1 8.78774e-09, cdf=0.01</title></circle>
+<circle cx="80.00069616501132" cy="1017.5" r="3" fill="#d62728"><title>UNI1 6.82515e-07, cdf=0.05</title></circle>
+<circle cx="80.00110997983565" cy="1005.0" r="3" fill="#d62728"><title>UNI1 1.08822e-06, cdf=0.1</title></circle>
+<circle cx="80.00148345891897" cy="980.0" r="3" fill="#d62728"><title>UNI1 1.45437e-06, cdf=0.2</title></circle>
+<circle cx="80.0018793467473" cy="955.0" r="3" fill="#d62728"><title>UNI1 1.8425e-06, cdf=0.3</title></circle>
+<circle cx="80.00286831935995" cy="930.0" r="3" fill="#d62728"><title>UNI1 2.81208e-06, cdf=0.4</title></circle>
+<circle cx="80.0063745409942" cy="905.0" r="3" fill="#d62728"><title>UNI1 6.24955e-06, cdf=0.5</title></circle>
+<circle cx="80.01551133328869" cy="880.0" r="3" fill="#d62728"><title>UNI1 1.52072e-05, cdf=0.6</title></circle>
+<circle cx="80.01683494315999" cy="855.0" r="3" fill="#d62728"><title>UNI1 1.65048e-05, cdf=0.7</title></circle>
+<circle cx="80.0196838416076" cy="830.0" r="3" fill="#d62728"><title>UNI1 1.92979e-05, cdf=0.8</title></circle>
+<circle cx="80.05761736514286" cy="805.0" r="3" fill="#d62728"><title>UNI1 5.64876e-05, cdf=0.9</title></circle>
+<circle cx="80.14306788549149" cy="792.5" r="3" fill="#d62728"><title>UNI1 0.000140263, cdf=0.95</title></circle>
+<circle cx="80.22963734917377" cy="787.5" r="3" fill="#d62728"><title>UNI1 0.000225135, cdf=0.97</title></circle>
+<circle cx="80.6418477073569" cy="782.5" r="3" fill="#d62728"><title>UNI1 0.000629262, cdf=0.99</title></circle>
+<circle cx="81.49019498771737" cy="781.25" r="3" fill="#d62728"><title>UNI1 0.00146098, cdf=0.995</title></circle>
+<circle cx="85.44258818016912" cy="780.25" r="3" fill="#d62728"><title>UNI1 0.00533587, cdf=0.999</title></circle>
+<circle cx="1100.0" cy="780.0" r="3" fill="#d62728"><title>UNI1 1, cdf=1</title></circle>
+<text x="80" y="1112" class="title">Normalized by p99, log x-axis</text>
+<rect x="80" y="1130" width="1020" height="250" class="plot-bg"/>
+<line x1="80" y1="1380" x2="1100" y2="1380" class="axis"/>
+<line x1="80" y1="1130" x2="80" y2="1380" class="axis"/>
+<line x1="80" y1="1380.0" x2="1100" y2="1380.0" class="grid"/>
+<text x="70" y="1384.0" class="tick" text-anchor="end">0</text>
+<line x1="80" y1="1317.5" x2="1100" y2="1317.5" class="grid"/>
+<text x="70" y="1321.5" class="tick" text-anchor="end">0.25</text>
+<line x1="80" y1="1255.0" x2="1100" y2="1255.0" class="grid"/>
+<text x="70" y="1259.0" class="tick" text-anchor="end">0.5</text>
+<line x1="80" y1="1192.5" x2="1100" y2="1192.5" class="grid"/>
+<text x="70" y="1196.5" class="tick" text-anchor="end">0.75</text>
+<line x1="80" y1="1130.0" x2="1100" y2="1130.0" class="grid"/>
+<text x="70" y="1134.0" class="tick" text-anchor="end">1</text>
+<line x1="80.0" y1="1380" x2="80.0" y2="1385" class="axis"/>
+<text x="80.0" y="1402" class="tick" text-anchor="middle">0.001</text>
+<line x1="420.0" y1="1380" x2="420.0" y2="1385" class="axis"/>
+<text x="420.0" y="1402" class="tick" text-anchor="middle">0.01</text>
+<line x1="760.0" y1="1380" x2="760.0" y2="1385" class="axis"/>
+<text x="760.0" y="1402" class="tick" text-anchor="middle">0.1</text>
+<line x1="1100.0" y1="1380" x2="1100.0" y2="1385" class="axis"/>
+<text x="1100.0" y="1402" class="tick" text-anchor="middle">1</text>
+<text x="590.0" y="1428" class="label" text-anchor="middle">Normalized flow size, value / p99</text>
+<text x="35" y="1255.0" class="label" text-anchor="middle" transform="rotate(-90 35 1255.0)">CDF</text>
+<polyline points="80.00,1342.50 80.00,1330.00 80.00,1305.00 155.43,1280.00 224.83,1247.50 360.13,1230.00 597.78,1205.00 700.13,1180.00 835.43,1155.00 937.78,1137.50 1100.00,1130.00" fill="none" stroke="#1f77b4" stroke-width="2.5"/>
+<circle cx="80.0" cy="1342.5" r="3" fill="#1f77b4"><title>DCTCP 0.000333333, cdf=0.15</title></circle>
+<circle cx="80.0" cy="1330.0" r="3" fill="#1f77b4"><title>DCTCP 0.000666667, cdf=0.2</title></circle>
+<circle cx="80.0" cy="1305.0" r="3" fill="#1f77b4"><title>DCTCP 0.001, cdf=0.3</title></circle>
+<circle cx="155.42857486956126" cy="1280.0" r="3" fill="#1f77b4"><title>DCTCP 0.00166667, cdf=0.4</title></circle>
+<circle cx="224.8293689725756" cy="1247.5" r="3" fill="#1f77b4"><title>DCTCP 0.00266667, cdf=0.53</title></circle>
+<circle cx="360.12897192106834" cy="1230.0" r="3" fill="#1f77b4"><title>DCTCP 0.00666667, cdf=0.6</title></circle>
+<circle cx="597.7787733953147" cy="1205.0" r="3" fill="#1f77b4"><title>DCTCP 0.0333333, cdf=0.7</title></circle>
+<circle cx="700.1289719210683" cy="1180.0" r="3" fill="#1f77b4"><title>DCTCP 0.0666667, cdf=0.8</title></circle>
+<circle cx="835.4285748695611" cy="1155.0" r="3" fill="#1f77b4"><title>DCTCP 0.166667, cdf=0.9</title></circle>
+<circle cx="937.7787733953147" cy="1137.5" r="3" fill="#1f77b4"><title>DCTCP 0.333333, cdf=0.97</title></circle>
+<circle cx="1100.0" cy="1130.0" r="3" fill="#1f77b4"><title>DCTCP 1, cdf=1</title></circle>
+<polyline points="80.00,1380.00 80.00,1377.50 92.00,1367.50 160.88,1355.00 203.71,1330.00 238.64,1305.00 301.07,1280.00 418.99,1255.00 550.29,1230.00 562.39,1205.00 585.47,1180.00 744.06,1155.00 878.36,1142.50 948.23,1137.50 1100.00,1132.50 1224.38,1131.25 1415.65,1130.25 2188.40,1130.00" fill="none" stroke="#d62728" stroke-width="2.5"/>
+<circle cx="80.0" cy="1380.0" r="3" fill="#d62728"><title>UNI1 2.32752e-06, cdf=0</title></circle>
+<circle cx="80.0" cy="1377.5" r="3" fill="#d62728"><title>UNI1 1.39651e-05, cdf=0.01</title></circle>
+<circle cx="91.99526730166137" cy="1367.5" r="3" fill="#d62728"><title>UNI1 0.00108463, cdf=0.05</title></circle>
+<circle cx="160.88025230565682" cy="1355.0" r="3" fill="#d62728"><title>UNI1 0.00172935, cdf=0.1</title></circle>
+<circle cx="203.70680011549086" cy="1330.0" r="3" fill="#d62728"><title>UNI1 0.00231123, cdf=0.2</title></circle>
+<circle cx="238.6354736042063" cy="1305.0" r="3" fill="#d62728"><title>UNI1 0.00292803, cdf=0.3</title></circle>
+<circle cx="301.0664733862682" cy="1280.0" r="3" fill="#d62728"><title>UNI1 0.00446885, cdf=0.4</title></circle>
+<circle cx="418.9857541992274" cy="1255.0" r="3" fill="#d62728"><title>UNI1 0.00993155, cdf=0.5</title></circle>
+<circle cx="550.2938259917499" cy="1230.0" r="3" fill="#d62728"><title>UNI1 0.0241667, cdf=0.6</title></circle>
+<circle cx="562.3850844496177" cy="1205.0" r="3" fill="#d62728"><title>UNI1 0.0262289, cdf=0.7</title></circle>
+<circle cx="585.4704749220386" cy="1180.0" r="3" fill="#d62728"><title>UNI1 0.0306675, cdf=0.8</title></circle>
+<circle cx="744.0612759085444" cy="1155.0" r="3" fill="#d62728"><title>UNI1 0.089768, cdf=0.9</title></circle>
+<circle cx="878.3574558167104" cy="1142.5" r="3" fill="#d62728"><title>UNI1 0.2229, cdf=0.95</title></circle>
+<circle cx="948.2275804259375" cy="1137.5" r="3" fill="#d62728"><title>UNI1 0.357775, cdf=0.97</title></circle>
+<circle cx="1100.0" cy="1132.5" r="3" fill="#d62728"><title>UNI1 1, cdf=0.99</title></circle>
+<circle cx="1224.3757753748325" cy="1131.25" r="3" fill="#d62728"><title>UNI1 2.32173, cdf=0.995</title></circle>
+<circle cx="1415.6469831627435" cy="1130.25" r="3" fill="#d62728"><title>UNI1 8.47956, cdf=0.999</title></circle>
+<circle cx="2188.3971803481113" cy="1130.0" r="3" fill="#d62728"><title>UNI1 1589.16, cdf=1</title></circle>
+<line x1="880" y1="32" x2="910" y2="32" stroke="#1f77b4" stroke-width="3"/>
+<text x="920" y="37" class="label">DCTCP</text>
+<line x1="880" y1="54" x2="910" y2="54" stroke="#d62728" stroke-width="3"/>
+<text x="920" y="59" class="label">UNI1</text>
+</svg>
