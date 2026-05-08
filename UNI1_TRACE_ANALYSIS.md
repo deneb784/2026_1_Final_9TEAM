@@ -270,6 +270,108 @@ UNI1은 의도대로 약 80:20 비율이다. 현재 브랜치의 기존 `dataset
 
 3번 결과가 낮다면, synthetic workload가 실제 trace를 충분히 대표하지 못한다는 근거가 된다.
 
+## Feature 정규화 필요성
+
+TrafficGenerator dataset과 UNI1 dataset은 같은 11개 feature schema를 사용하지만, feature 값의 scale이 크게 다르다. 따라서 두 dataset을 비교하거나 같은 모델에 넣을 때는 feature 정규화가 필요하다.
+
+정규화가 필요한 이유는 다음과 같다.
+
+1. `iat_us` scale 차이
+
+   TrafficGenerator는 Mininet/TrafficGenerator가 짧은 간격으로 flow를 생성하므로 packet 간격이 작다. 반면 UNI1은 실제 trace이므로 idle gap과 burst가 섞여 `iat_us`가 훨씬 크고 불규칙하다.
+
+2. `tcp_window_size` scale 차이
+
+   기존 dataset의 TCP window size 평균은 UNI1보다 훨씬 작다. 이 값은 OS, TCP stack, capture 위치, 실제 네트워크 환경의 영향을 크게 받는다. 정규화 없이 사용하면 모델이 flow 특성보다 dataset 출처 차이를 먼저 학습할 수 있다.
+
+3. packet size feature 차이
+
+   `frame_len`, `ip_len`, `tcp_payload_bytes`는 label과 관련 있는 중요한 feature지만, synthetic workload와 real trace 사이의 absolute scale이 다르다. 같은 label 1이라도 TrafficGenerator에서는 MB급 flow가 많고, UNI1에서는 KB급 elephant가 많다.
+
+4. 모델의 domain shortcut 방지
+
+   정규화하지 않으면 모델이 다음과 같은 잘못된 shortcut을 배울 수 있다.
+
+   ```text
+   window size가 크면 UNI1
+   iat_us가 작으면 TrafficGenerator
+   payload가 MTU에 가까우면 synthetic elephant
+   ```
+
+   이런 규칙은 dataset 구분에는 도움이 되지만, 실제 목표인 early elephant flow classification에는 일반화 성능을 떨어뜨릴 수 있다.
+
+### 추천 정규화 방식
+
+큰 값과 heavy-tail을 갖는 feature는 먼저 `log1p`를 적용하는 것이 좋다.
+
+```python
+log_features = [
+    "frame_len",
+    "ip_len",
+    "tcp_payload_bytes",
+    "tcp_window_size",
+    "iat_us",
+]
+
+x[:, log_feature_indices] = np.log1p(x[:, log_feature_indices])
+```
+
+그 다음 train set에서만 평균과 표준편차를 계산해 standardization을 적용한다.
+
+```python
+mean = train_x.mean(axis=(0, 1), keepdims=True)
+std = train_x.std(axis=(0, 1), keepdims=True)
+std = np.where(std == 0, 1, std)
+
+train_x = (train_x - mean) / std
+val_x = (val_x - mean) / std
+test_x = (test_x - mean) / std
+```
+
+중요한 점은 `mean/std`를 validation/test/UNI1 전체에서 계산하면 안 된다는 것이다. 반드시 train split에서만 계산해야 data leakage를 피할 수 있다.
+
+### Label 기준과 정규화는 별개
+
+정규화는 feature 값의 scale을 맞추는 작업이고, label 기준을 바꾸는 작업이 아니다.
+
+현재 label 기준은 다음과 같이 해석할 수 있다.
+
+| dataset | label 기준 |
+|---|---|
+| TrafficGenerator | `DCTCP_CDF.txt`의 p80 지점인 2,000,000 bytes 이상 |
+| UNI1 | `dataset_univ1.jsonl` 후보 flow의 p80 지점인 31,877 bytes 이상 |
+
+즉 두 dataset 모두 각 workload에서 상대적으로 큰 flow를 elephant로 보는 기준을 사용한다. 다만 현재 저장된 `dataset.jsonl`은 캡처/매칭/packet-count filtering 이후 label 1 비율이 약 11.4%로 줄어 있다.
+
+따라서 필요한 처리는 다음처럼 분리해야 한다.
+
+| 문제 | 처리 |
+|---|---|
+| feature scale 차이 | log1p + train-set standardization |
+| label 1 비율 부족 | class weight 또는 sampling |
+| dataset 간 분포 차이 | cross-domain evaluation으로 별도 측정 |
+
+### Class imbalance 처리
+
+기존 `dataset.jsonl`은 현재 파일 기준으로 label 1이 약 11.4%다. 이 비율을 억지로 파일에서 늘리기보다는 학습 과정에서 보정하는 것이 안전하다.
+
+추천 방식:
+
+```text
+class_weight = "balanced"
+```
+
+또는 PyTorch라면 loss function에 label별 weight를 넣는다.
+
+정리하면 다음과 같다.
+
+```text
+정규화 = feature 숫자 scale 맞추기
+class weight = label 1 부족 보정
+```
+
+두 처리는 목적이 다르므로 함께 적용하는 것이 좋다.
+
 ## 재현 방법
 
 UNI1 dataset 재생성:
@@ -298,4 +400,3 @@ jupyter notebook
 ```text
 model/EDA.ipynb
 ```
-
