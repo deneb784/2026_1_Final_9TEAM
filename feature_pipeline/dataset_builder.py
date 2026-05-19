@@ -9,6 +9,14 @@ from feature_pipeline.flow_cache import FlowCache
 from feature_pipeline.models import FlowEntry
 
 
+MASKED_FEATURE_INDICES = {
+    7,   # retransmission
+    8,   # out_of_order
+    9,   # duplicate_ack
+    10,  # fast_retransmission
+}
+
+
 def find_pcap_files(pcap_dir: str | Path) -> list[str]:
     pattern = str(Path(pcap_dir) / "*.pcap")
     return sorted(glob(pattern))
@@ -37,6 +45,8 @@ def packet_to_vector(pkt, prev_ts_us: int | None) -> tuple[list, int]:
         int(pkt.duplicate_ack),
         int(pkt.fast_retransmission),
     ]
+    for index in MASKED_FEATURE_INDICES:
+        vector[index] = 0
     return vector, pkt.ts_us
 
 
@@ -60,10 +70,21 @@ def make_label(size_bytes: int, threshold: int) -> int:
     return 1 if size_bytes >= threshold else 0
 
 
+def percentile(sorted_values: list[int], q: float) -> int:
+    if not sorted_values:
+        return 0
+    if q <= 0:
+        return sorted_values[0]
+    if q >= 1:
+        return sorted_values[-1]
+    return sorted_values[int((len(sorted_values) - 1) * q)]
+
+
 def build_dataset_sample(
     entry: FlowEntry,
     packet_count: int,
     label_threshold: int,
+    parent_flow_size_bytes: int,
 ) -> dict:
     directional_size_bytes = compute_directional_size_bytes(entry)
     x = build_x_from_entry(entry, packet_count)
@@ -76,6 +97,8 @@ def build_dataset_sample(
         },
         "x": x,
         "directional_size_bytes": directional_size_bytes,
+        "parent_flow_size_bytes": parent_flow_size_bytes,
+        "flow_size_bytes": directional_size_bytes,
         "label": make_label(directional_size_bytes, threshold=label_threshold),
     }
 
@@ -84,7 +107,7 @@ def run_dataset_builder(
     results_dir: str = "results",
     pcap_dir: str = "captured_packet",
     packet_count: int = 10,
-    label_threshold: int = 2000000,
+    label_threshold: int | None = None,
     direction_filter: str | None = None,
 ) -> list[dict]:
     all_metas = load_all_request_meta(results_dir)
@@ -108,16 +131,38 @@ def run_dataset_builder(
 
             flow_cache.add_packet(meta, direction, packet)
 
+    eligible_entries = [
+        entry
+        for entry in flow_cache.entries.values()
+        if len(entry.packets) >= packet_count
+    ]
+
+    parent_sizes: dict[tuple[int, int], int] = {}
+    for entry in eligible_entries:
+        key = (entry.src_index, entry.flow_id)
+        directional_size = compute_directional_size_bytes(entry)
+        parent_sizes[key] = max(parent_sizes.get(key, 0), directional_size)
+
+    directional_sizes = [
+        compute_directional_size_bytes(entry)
+        for entry in eligible_entries
+    ]
+
+    if label_threshold is None:
+        label_threshold = percentile(sorted(directional_sizes), 0.80)
+
     samples: list[dict] = []
 
-    for entry in flow_cache.entries.values():
+    for entry in eligible_entries:
         if len(entry.packets) < packet_count:
             continue
 
+        parent_key = (entry.src_index, entry.flow_id)
         sample = build_dataset_sample(
             entry,
             packet_count=packet_count,
             label_threshold=label_threshold,
+            parent_flow_size_bytes=parent_sizes[parent_key],
         )
         samples.append(sample)
 
@@ -137,7 +182,7 @@ if __name__ == "__main__":
         results_dir="results",
         pcap_dir="captured_packet",
         packet_count=10,
-        label_threshold=2000000,
+        label_threshold=None,
         direction_filter=None,  # src_to_dst, dst_to_src 모두 포함
     )
 

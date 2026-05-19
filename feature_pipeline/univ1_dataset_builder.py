@@ -47,6 +47,13 @@ QUANTILES_FOR_CDF = [
     1.0,
 ]
 
+MASKED_FEATURE_INDICES = {
+    7,   # retransmission
+    8,   # out_of_order
+    9,   # duplicate_ack
+    10,  # fast_retransmission
+}
+
 
 @dataclass
 class DirectionState:
@@ -144,6 +151,7 @@ def add_packet_to_direction(
     row: dict[str, str],
     ts_us: int,
     packet_count: int,
+    mask_analysis_features: bool = True,
 ) -> None:
     iat_us = 0 if direction.prev_ts_us is None else ts_us - direction.prev_ts_us
     direction.prev_ts_us = ts_us
@@ -156,7 +164,7 @@ def add_packet_to_direction(
     if len(direction.feature_packets) >= packet_count:
         return
 
-    direction.feature_packets.append([
+    feature_packet = [
         to_int(row["frame.len"]),
         to_int(row["ip.len"]),
         to_int(row["ip.ttl"]),
@@ -168,10 +176,18 @@ def add_packet_to_direction(
         to_flag(row["tcp.analysis.out_of_order"]),
         to_flag(row["tcp.analysis.duplicate_ack"]),
         to_flag(row["tcp.analysis.fast_retransmission"]),
-    ])
+    ]
+    if mask_analysis_features:
+        for index in MASKED_FEATURE_INDICES:
+            feature_packet[index] = 0
+    direction.feature_packets.append(feature_packet)
 
 
-def build_stream_states(pcap_files: list[Path], packet_count: int) -> dict[tuple[str, int], StreamState]:
+def build_stream_states(
+    pcap_files: list[Path],
+    packet_count: int,
+    mask_analysis_features: bool = True,
+) -> dict[tuple[str, int], StreamState]:
     streams: dict[tuple[str, int], StreamState] = {}
 
     for pcap_file in pcap_files:
@@ -209,9 +225,21 @@ def build_stream_states(pcap_files: list[Path], packet_count: int) -> dict[tuple
             stream.last_ts_us = max(stream.last_ts_us, ts_us)
 
             if src_ip == stream.src_ip and src_port == stream.src_port and dst_ip == stream.dst_ip and dst_port == stream.dst_port:
-                add_packet_to_direction(stream.fwd, row, ts_us, packet_count)
+                add_packet_to_direction(
+                    stream.fwd,
+                    row,
+                    ts_us,
+                    packet_count,
+                    mask_analysis_features=mask_analysis_features,
+                )
             elif src_ip == stream.dst_ip and src_port == stream.dst_port and dst_ip == stream.src_ip and dst_port == stream.src_port:
-                add_packet_to_direction(stream.rev, row, ts_us, packet_count)
+                add_packet_to_direction(
+                    stream.rev,
+                    row,
+                    ts_us,
+                    packet_count,
+                    mask_analysis_features=mask_analysis_features,
+                )
 
     return streams
 
@@ -235,6 +263,11 @@ def dominant_direction(stream: StreamState) -> tuple[str, DirectionState]:
     if stream.rev.payload_bytes > stream.fwd.payload_bytes:
         return "dst_to_src", stream.rev
     return "src_to_dst", stream.fwd
+
+
+def iter_directional_states(stream: StreamState):
+    yield "src_to_dst", stream.fwd
+    yield "dst_to_src", stream.rev
 
 
 def write_stats_csv(streams: list[StreamState], output_path: Path) -> None:
@@ -282,27 +315,32 @@ def write_dataset_jsonl(
     count = 0
     with output_path.open("w", encoding="utf-8") as f:
         for flow_id, stream in enumerate(streams, start=1):
-            direction_name, direction = dominant_direction(stream)
-            if flow_size_bytes(stream) <= 0 or len(direction.feature_packets) < packet_count:
+            parent_size_bytes = flow_size_bytes(stream)
+            if parent_size_bytes <= 0:
                 continue
 
-            sample = {
-                "flow_key": {
-                    "src_index": 0,
-                    "flow_id": flow_id,
-                    "direction": direction_name,
-                },
-                "trace_key": {
-                    "source_file": stream.source_file,
-                    "tcp_stream": stream.tcp_stream,
-                },
-                "x": direction.feature_packets[:packet_count],
-                "directional_size_bytes": direction.payload_bytes,
-                "flow_size_bytes": flow_size_bytes(stream),
-                "label": 1 if flow_size_bytes(stream) >= threshold else 0,
-            }
-            f.write(json.dumps(sample, ensure_ascii=False) + "\n")
-            count += 1
+            for direction_name, direction in iter_directional_states(stream):
+                if len(direction.feature_packets) < packet_count:
+                    continue
+
+                sample = {
+                    "flow_key": {
+                        "src_index": 0,
+                        "flow_id": flow_id,
+                        "direction": direction_name,
+                    },
+                    "trace_key": {
+                        "source_file": stream.source_file,
+                        "tcp_stream": stream.tcp_stream,
+                    },
+                    "x": direction.feature_packets[:packet_count],
+                    "directional_size_bytes": direction.payload_bytes,
+                    "parent_flow_size_bytes": parent_size_bytes,
+                    "flow_size_bytes": direction.payload_bytes,
+                    "label": 1 if direction.payload_bytes >= threshold else 0,
+                }
+                f.write(json.dumps(sample, ensure_ascii=False) + "\n")
+                count += 1
     return count
 
 
@@ -331,8 +369,10 @@ def write_cdf(sizes: list[int], output_path: Path) -> None:
 
 
 def is_dataset_candidate(stream: StreamState, packet_count: int) -> bool:
-    direction_name, direction = dominant_direction(stream)
-    return bool(direction_name) and flow_size_bytes(stream) > 0 and len(direction.feature_packets) >= packet_count
+    return any(
+        direction.payload_bytes > 0 and len(direction.feature_packets) >= packet_count
+        for _, direction in iter_directional_states(stream)
+    )
 
 
 def write_summary(
@@ -376,19 +416,29 @@ def main() -> None:
     parser.add_argument("--stats-out", default="analyze/univ1_flow_stats.csv")
     parser.add_argument("--summary-out", default="analyze/univ1_summary.json")
     parser.add_argument("--cdf-out", default="TrafficGenerator/conf/UNI1_CDF.txt")
+    parser.add_argument(
+        "--no-mask-analysis-features",
+        action="store_true",
+        help="keep retransmission/out_of_order/duplicate_ack/fast_retransmission values instead of zero-masking them",
+    )
     args = parser.parse_args()
 
     pcap_files = find_univ1_pcaps(Path(args.pcap_dir))
     if not pcap_files:
         raise SystemExit(f"no univ1_pt*.pcap files found in {args.pcap_dir}")
 
-    streams_by_key = build_stream_states(pcap_files, args.packet_count)
+    streams_by_key = build_stream_states(
+        pcap_files,
+        args.packet_count,
+        mask_analysis_features=not args.no_mask_analysis_features,
+    )
     streams = list(streams_by_key.values())
     sizes = [flow_size_bytes(stream) for stream in streams if flow_size_bytes(stream) > 0]
     dataset_candidate_sizes = [
-        flow_size_bytes(stream)
+        direction.payload_bytes
         for stream in streams
-        if is_dataset_candidate(stream, args.packet_count)
+        for _, direction in iter_directional_states(stream)
+        if direction.payload_bytes > 0 and len(direction.feature_packets) >= args.packet_count
     ]
     threshold = percentile(sorted(dataset_candidate_sizes), 0.80)
 

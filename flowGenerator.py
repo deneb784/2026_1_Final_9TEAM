@@ -6,7 +6,15 @@ import subprocess
 
 from mininet.cli import CLI
 
-def flowGenerator(network, port, flowsPerPair):
+def flowGenerator(
+    network,
+    port,
+    flowsPerPair,
+    results_dir="results",
+    cdf_file="UNI1_CDF.txt",
+    load_mbps=80,
+    seed_base=1,
+):
     """
     Mininet 네트워크에서 트래픽 플로우를 생성하는 메인 함수.
 
@@ -18,7 +26,7 @@ def flowGenerator(network, port, flowsPerPair):
     workDirectory = os.getcwd()
 
     # results 폴더 없으면 생성
-    os.makedirs('results', exist_ok=True)
+    os.makedirs(results_dir, exist_ok=True)
 
     allHosts = network.hosts
     srcHosts = []
@@ -40,9 +48,8 @@ def flowGenerator(network, port, flowsPerPair):
         for dst in dstHosts:
             configLines.append('server %s %s' % (dst.params['ip'], port))
 
-        # 요청 크기 분포(CDF) 파일 지정 (DCTCP 트래픽 패턴 사용)
-        cdf = 'DCTCP_CDF.txt'
-        configLines.append('req_size_dist TrafficGenerator/conf/%s' % cdf)
+        # 요청 크기 분포(CDF) 파일 지정
+        configLines.append('req_size_dist TrafficGenerator/conf/%s' % cdf_file)
 
         # 각 src마다 CDF 파일 (DCTCP) 지정
         with open('TrafficGenerator/conf/src%s_config.txt' % srcIndex, 'w') as configFile:
@@ -51,7 +58,10 @@ def flowGenerator(network, port, flowsPerPair):
                 configFile.write('\n')
 
     # 이전 실행 결과 파일이 있으면 삭제
-    for f in ['results/flows.txt'] + ['results/flows_%s.txt' % i for i in range(len(srcHosts))]:
+    for f in [os.path.join(results_dir, 'flows.txt')] + [
+        os.path.join(results_dir, 'flows_%s.txt' % i)
+        for i in range(len(srcHosts))
+    ]:
         if os.path.exists(f):
             os.remove(f)
 
@@ -76,7 +86,14 @@ def flowGenerator(network, port, flowsPerPair):
     # 각 host shell에서 직접 client를 병렬 실행한다.
     processes = []
     for srcIndex, srcHost in enumerate(srcHosts):
-        process = startSrc(srcHost, flowsPerPair, srcIndex)
+        process = startSrc(
+            srcHost,
+            flowsPerPair,
+            srcIndex,
+            results_dir=results_dir,
+            load_mbps=load_mbps,
+            seed=seed_base + srcIndex,
+        )
         processes.append((srcIndex, srcHost, process))
 
     for srcIndex, srcHost, process in processes:
@@ -96,19 +113,26 @@ def startDst(dstHosts, port):
         dst.cmd('TrafficGenerator/bin/server -p %s &' % port)
 
 
-def startSrc(srcHost, flowsPerPair, srcIndex):
+def startSrc(srcHost, flowsPerPair, srcIndex, results_dir="results", load_mbps=80, seed=1):
     """
     특정 src 호스트에서 TrafficGenerator 클라이언트를 실행하여 트래픽을 생성.
     """
     print('start flows from ' + srcHost.name)
     print(srcHost.name + ' flow generate ' + time.strftime('%Y.%m.%d - %H:%M:%S'))
     command = (
-        'TrafficGenerator/bin/client -b 80 '
+        'TrafficGenerator/bin/client -b %s '
         '-c TrafficGenerator/conf/src%s_config.txt '
-        '-n %s -l results/flows_%s.txt -s 1 -x %s -v'
-        % (srcIndex, flowsPerPair, srcIndex, srcIndex)
+        '-n %s -l %s -s %s -x %s -v'
+        % (
+            load_mbps,
+            srcIndex,
+            flowsPerPair,
+            os.path.join(results_dir, 'flows_%s.txt' % srcIndex),
+            seed,
+            srcIndex,
+        )
     )
-    log_path = 'results/log_%s.txt' % srcIndex
+    log_path = os.path.join(results_dir, 'log_%s.txt' % srcIndex)
     log_file = open(log_path, 'w')
     process = srcHost.popen(
         command,

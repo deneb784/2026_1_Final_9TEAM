@@ -1,3 +1,5 @@
+import argparse
+import shutil
 import sys, os, time, subprocess
 from mininet.log import setLogLevel
 
@@ -15,6 +17,7 @@ from packet_captuer import CapturePoint, PacketCapturer
 
 예시:
     sudo python3 main.py 100
+    sudo python3 main.py 500 --run-id 001 --load-mbps 80 --seed-base 1000
 """
 
 
@@ -55,18 +58,40 @@ def configure_ecmp_group_selection(network, k):
         # edge와 다른 basis를 사용해 상위 계층에서 동일 hash 결과가 반복되는 현상을 줄인다.
         _mod_group(agg_name, 1000 + idx)
 
+
+def make_tree_readable(path):
+    """sudo 실행 후 생성된 run 산출물을 일반 사용자 후처리에서 읽을 수 있게 한다."""
+    for root, dirs, files in os.walk(path):
+        os.chmod(root, 0o755)
+        for dirname in dirs:
+            os.chmod(os.path.join(root, dirname), 0o755)
+        for filename in files:
+            os.chmod(os.path.join(root, filename), 0o644)
+
 if __name__ == '__main__':
 
-    if len(sys.argv) < 2:
-        print('Usage: sudo python3 %s <flowsPerPair>' % sys.argv[0])
-        sys.exit(1)
+    parser = argparse.ArgumentParser()
+    parser.add_argument('flowsPerPair', type=int)
+    parser.add_argument('--run-id', default=None)
+    parser.add_argument('--output-root', default='runs')
+    parser.add_argument('--load-mbps', type=int, default=80)
+    parser.add_argument('--seed-base', type=int, default=1000)
+    parser.add_argument('--cdf-file', default='UNI1_CDF.txt')
+    args = parser.parse_args()
 
-    flowsPerPair = int(sys.argv[1])
+    flowsPerPair = args.flowsPerPair
     k       = 4    # fat-tree 파라미터 고정
     DST_PORT = 5001 # 트래픽을 받는 HOST 포트 번호 5001로 고정
 
     setLogLevel('info')
-    runtime_capture_dir = '/tmp/capstone_captured_packet'
+    run_id = args.run_id or time.strftime('%Y%m%d_%H%M%S')
+    run_dir = os.path.join(args.output_root, 'mininet_%s' % run_id)
+    results_dir = os.path.join(run_dir, 'results')
+    capture_dir = os.path.join(run_dir, 'captured_packet')
+    runtime_capture_dir = '/tmp/capstone_captured_packet_%s' % run_id
+
+    os.makedirs(results_dir, exist_ok=True)
+    os.makedirs(capture_dir, exist_ok=True)
 
     # TrafficGenerator 컴파일
     os.system('cd TrafficGenerator && make && cd -')
@@ -156,17 +181,26 @@ if __name__ == '__main__':
 
         # 트래픽 생성 (pod0,1=src → pod2,3=dst)
         print('[*] 트래픽 생성 시작...')
-        flowGenerator(network, DST_PORT, flowsPerPair)
+        flowGenerator(
+            network,
+            DST_PORT,
+            flowsPerPair,
+            results_dir=results_dir,
+            cdf_file=args.cdf_file,
+            load_mbps=args.load_mbps,
+            seed_base=args.seed_base,
+        )
 
         time.sleep(1)
 
         capturer.stop()
         print('[*] 패킷 캡처 중단')
 
-        # 실험 중 생성된 pcap을 후처리 스크립트가 읽는 고정 경로로 복사한다.
-        os.makedirs('captured_packet', exist_ok=True)
-        os.system('cp -r %s/. captured_packet/' % runtime_capture_dir)
-        print('[*] 패킷 캡처 파일 복사 완료 (captured_packet/)')
+        # 실험 중 생성된 pcap을 run별 디렉터리에 복사한다.
+        shutil.copytree(runtime_capture_dir, capture_dir, dirs_exist_ok=True)
+        make_tree_readable(run_dir)
+        print('[*] 패킷 캡처 파일 복사 완료 (%s)' % capture_dir)
+        print('[*] run 결과 위치: %s' % run_dir)
 
         # print('[*] ECMP 검증용 uplink pcap 요약 생성 중...')
         # run_ecmp_verification(
@@ -178,7 +212,7 @@ if __name__ == '__main__':
         # 결과 분석
         result_script = 'TrafficGenerator/src/script/result.py'
         for i in range(2 * (k // 2) ** 2):  # src 수 = pod0+pod1 호스트 수 = 2*(k/2)^2
-            flows_file = 'results/flows_%s.txt' % i
+            flows_file = os.path.join(results_dir, 'flows_%s.txt' % i)
             if os.path.exists(flows_file):
                 print('[*] 결과 분석 중... (%s)' % flows_file)
                 os.system('python3 %s %s' % (result_script, flows_file))
