@@ -12,6 +12,7 @@ FASTFLOW_PAPER_ANALYSIS.md
 ONLINE_DETECTION_PIPELINE_PLAN.md
 PROFESSOR_MEETING_PLAN.md
 univ1_trace/
+model/model_train_test/
 *.pdf
 *.tgz
 *.jsonl
