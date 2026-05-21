@@ -1,0 +1,17 @@
+name: capstone-gru
+channels:
+  - defaults
+dependencies:
+  - python=3.12
+  - pandas
+  - numpy
+  - matplotlib
+  - seaborn
+  - scikit-learn
+  - scipy
+  - jupyter
+  - ipykernel
+  - pip
+  - pip:
+      - --index-url https://download.pytorch.org/whl/cpu
+      - torch

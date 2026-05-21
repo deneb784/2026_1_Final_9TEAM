@@ -1,0 +1,62 @@
+/home/leesungwon/capstone/model/GRU/evaluate.py:104: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  state = torch.load(model_path, map_location=device)
+------------------------------------------------------------------------
+tolerance=0.01 samples=29347 label_mode=label
+PR-AUC/AP: 0.7610745394694861
+ROC-AUC:   0.9699329513744096
+Avg inference: 0.5028 ms
+Avg exit step: 5.71
+threshold sweep:
+  th=0.3 acc=0.8900 prec=0.4685 rec=0.9737 f1=0.6326 cm=[[23338,3154],[75,2780]]
+  th=0.4 acc=0.8991 prec=0.4905 rec=0.9709 f1=0.6518 cm=[[23613,2879],[83,2772]]
+  th=0.5 acc=0.9072 prec=0.5121 rec=0.9674 f1=0.6697 cm=[[23861,2631],[93,2762]]
+  th=0.6 acc=0.9197 prec=0.5498 rec=0.9611 f1=0.6995 cm=[[24245,2247],[111,2744]]
+  th=0.7 acc=0.9310 prec=0.5918 rec=0.9373 f1=0.7255 cm=[[24646,1846],[179,2676]]
+  th=0.8 acc=0.9397 prec=0.6409 rec=0.8634 f1=0.7357 cm=[[25111,1381],[390,2465]]
+  th=0.9 acc=0.9442 prec=0.7030 rec=0.7387 f1=0.7204 cm=[[25601,891],[746,2109]]
+best_f1_threshold=0.8 best_f1=0.7357
+------------------------------------------------------------------------
+tolerance=0.03 samples=29347 label_mode=label
+PR-AUC/AP: 0.6991037949019364
+ROC-AUC:   0.9603018179760443
+Avg inference: 0.4217 ms
+Avg exit step: 4.81
+threshold sweep:
+  th=0.3 acc=0.8785 prec=0.4427 rec=0.9615 f1=0.6062 cm=[[23036,3456],[110,2745]]
+  th=0.4 acc=0.8897 prec=0.4672 rec=0.9534 f1=0.6271 cm=[[23388,3104],[133,2722]]
+  th=0.5 acc=0.8986 prec=0.4892 rec=0.9492 f1=0.6456 cm=[[23662,2830],[145,2710]]
+  th=0.6 acc=0.9124 prec=0.5281 rec=0.9380 f1=0.6758 cm=[[24099,2393],[177,2678]]
+  th=0.7 acc=0.9206 prec=0.5555 rec=0.9187 f1=0.6924 cm=[[24393,2099],[232,2623]]
+  th=0.8 acc=0.9307 prec=0.6057 rec=0.8249 f1=0.6985 cm=[[24959,1533],[500,2355]]
+  th=0.9 acc=0.9366 prec=0.6877 rec=0.6371 f1=0.6615 cm=[[25666,826],[1036,1819]]
+best_f1_threshold=0.8 best_f1=0.6985
+------------------------------------------------------------------------
+tolerance=0.05 samples=29347 label_mode=label
+PR-AUC/AP: 0.6565837483052637
+ROC-AUC:   0.9534656664021495
+Avg inference: 0.3879 ms
+Avg exit step: 4.44
+threshold sweep:
+  th=0.3 acc=0.8698 prec=0.4248 rec=0.9548 f1=0.5880 cm=[[22801,3691],[129,2726]]
+  th=0.4 acc=0.8809 prec=0.4471 rec=0.9464 f1=0.6073 cm=[[23151,3341],[153,2702]]
+  th=0.5 acc=0.8899 prec=0.4672 rec=0.9394 f1=0.6240 cm=[[23433,3059],[173,2682]]
+  th=0.6 acc=0.9030 prec=0.5008 rec=0.9285 f1=0.6506 cm=[[23849,2643],[204,2651]]
+  th=0.7 acc=0.9109 prec=0.5245 rec=0.9047 f1=0.6640 cm=[[24150,2342],[272,2583]]
+  th=0.8 acc=0.9250 prec=0.5850 rec=0.7895 f1=0.6720 cm=[[24893,1599],[601,2254]]
+  th=0.9 acc=0.9302 prec=0.6669 rec=0.5639 f1=0.6111 cm=[[25688,804],[1245,1610]]
+best_f1_threshold=0.8 best_f1=0.6720
+------------------------------------------------------------------------
+tolerance=0.1 samples=29347 label_mode=label
+PR-AUC/AP: 0.5109763765792716
+ROC-AUC:   0.90533795616983
+Avg inference: 0.3173 ms
+Avg exit step: 3.61
+threshold sweep:
+  th=0.3 acc=0.7509 prec=0.2743 rec=0.9482 f1=0.4255 cm=[[19329,7163],[148,2707]]
+  th=0.4 acc=0.7633 prec=0.2833 rec=0.9370 f1=0.4351 cm=[[19725,6767],[180,2675]]
+  th=0.5 acc=0.7729 prec=0.2907 rec=0.9264 f1=0.4425 cm=[[20037,6455],[210,2645]]
+  th=0.6 acc=0.8026 prec=0.3132 rec=0.8630 f1=0.4597 cm=[[21090,5402],[391,2464]]
+  th=0.7 acc=0.8171 prec=0.3256 rec=0.8217 f1=0.4664 cm=[[21633,4859],[509,2346]]
+  th=0.8 acc=0.9097 prec=0.5372 rec=0.5208 f1=0.5289 cm=[[25211,1281],[1368,1487]]
+  th=0.9 acc=0.9166 prec=0.6399 rec=0.3268 f1=0.4326 cm=[[25967,525],[1922,933]]
+best_f1_threshold=0.8 best_f1=0.5289

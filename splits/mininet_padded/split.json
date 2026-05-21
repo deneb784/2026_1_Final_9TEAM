@@ -1,0 +1,17 @@
+{
+  "input": "dataset_mininet_merged_padded_p90.jsonl",
+  "group_key": "run_id",
+  "train_groups": [
+    "mininet_003",
+    "mininet_002"
+  ],
+  "val_groups": [
+    "mininet_004"
+  ],
+  "test_groups": [
+    "mininet_001"
+  ],
+  "train_count": 16000,
+  "val_count": 8000,
+  "test_count": 8000
+}

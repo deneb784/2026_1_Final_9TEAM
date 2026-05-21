@@ -1,0 +1,20 @@
+{
+  "flow_count": 147774,
+  "packet_stream_count": 183519,
+  "dataset_candidate_count": 291396,
+  "elephant_threshold_dataset_p80_bytes": 10943,
+  "dataset_elephant_count": 58284,
+  "min_bytes": 1,
+  "avg_bytes": 68034.51563874565,
+  "p50_bytes": 4267,
+  "p80_bytes": 13176,
+  "p90_bytes": 38568,
+  "p95_bytes": 95767,
+  "p99_bytes": 429641,
+  "max_bytes": 682769160,
+  "dataset_p50_bytes": 1044,
+  "dataset_p80_bytes": 10943,
+  "dataset_p90_bytes": 15401,
+  "dataset_p95_bytes": 41337,
+  "dataset_p99_bytes": 231248
+}

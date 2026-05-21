@@ -270,6 +270,19 @@ def iter_directional_states(stream: StreamState):
     yield "dst_to_src", stream.rev
 
 
+def pad_feature_packets(feature_packets: list[list[int]], packet_count: int) -> tuple[list[list[int]], int]:
+    seq_len = min(len(feature_packets), packet_count)
+    padded = [list(row) for row in feature_packets[:packet_count]]
+
+    if not padded:
+        return padded, 0
+
+    while len(padded) < packet_count:
+        padded.append(list(padded[-1]))
+
+    return padded, seq_len
+
+
 def write_stats_csv(streams: list[StreamState], output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", newline="", encoding="utf-8") as f:
@@ -320,9 +333,10 @@ def write_dataset_jsonl(
                 continue
 
             for direction_name, direction in iter_directional_states(stream):
-                if len(direction.feature_packets) < packet_count:
+                if not direction.feature_packets:
                     continue
 
+                x, seq_len = pad_feature_packets(direction.feature_packets, packet_count)
                 sample = {
                     "flow_key": {
                         "src_index": 0,
@@ -333,7 +347,8 @@ def write_dataset_jsonl(
                         "source_file": stream.source_file,
                         "tcp_stream": stream.tcp_stream,
                     },
-                    "x": direction.feature_packets[:packet_count],
+                    "x": x,
+                    "seq_len": seq_len,
                     "directional_size_bytes": direction.payload_bytes,
                     "parent_flow_size_bytes": parent_size_bytes,
                     "flow_size_bytes": direction.payload_bytes,
@@ -370,7 +385,7 @@ def write_cdf(sizes: list[int], output_path: Path) -> None:
 
 def is_dataset_candidate(stream: StreamState, packet_count: int) -> bool:
     return any(
-        direction.payload_bytes > 0 and len(direction.feature_packets) >= packet_count
+        direction.payload_bytes > 0 and len(direction.feature_packets) > 0
         for _, direction in iter_directional_states(stream)
     )
 
@@ -438,7 +453,7 @@ def main() -> None:
         direction.payload_bytes
         for stream in streams
         for _, direction in iter_directional_states(stream)
-        if direction.payload_bytes > 0 and len(direction.feature_packets) >= args.packet_count
+        if direction.payload_bytes > 0 and len(direction.feature_packets) > 0
     ]
     threshold = percentile(sorted(dataset_candidate_sizes), 0.80)
 

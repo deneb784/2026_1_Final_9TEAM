@@ -50,7 +50,20 @@ def packet_to_vector(pkt, prev_ts_us: int | None) -> tuple[list, int]:
     return vector, pkt.ts_us
 
 
-def build_x_from_entry(entry: FlowEntry, packet_count: int) -> list[list]:
+def pad_feature_packets(x: list[list], packet_count: int) -> tuple[list[list], int]:
+    seq_len = min(len(x), packet_count)
+    padded = [list(row) for row in x[:packet_count]]
+
+    if not padded:
+        return padded, 0
+
+    while len(padded) < packet_count:
+        padded.append(list(padded[-1]))
+
+    return padded, seq_len
+
+
+def build_x_from_entry(entry: FlowEntry, packet_count: int) -> tuple[list[list], int]:
     packets = entry.packets[:packet_count]
     x: list[list] = []
     prev_ts_us = None
@@ -59,7 +72,7 @@ def build_x_from_entry(entry: FlowEntry, packet_count: int) -> list[list]:
         vector, prev_ts_us = packet_to_vector(pkt, prev_ts_us)
         x.append(vector)
 
-    return x
+    return pad_feature_packets(x, packet_count)
 
 
 def compute_directional_size_bytes(entry: FlowEntry) -> int:
@@ -87,7 +100,7 @@ def build_dataset_sample(
     parent_flow_size_bytes: int,
 ) -> dict:
     directional_size_bytes = compute_directional_size_bytes(entry)
-    x = build_x_from_entry(entry, packet_count)
+    x, seq_len = build_x_from_entry(entry, packet_count)
 
     return {
         "flow_key": {
@@ -96,6 +109,7 @@ def build_dataset_sample(
             "direction": entry.direction,
         },
         "x": x,
+        "seq_len": seq_len,
         "directional_size_bytes": directional_size_bytes,
         "parent_flow_size_bytes": parent_flow_size_bytes,
         "flow_size_bytes": directional_size_bytes,
@@ -134,7 +148,7 @@ def run_dataset_builder(
     eligible_entries = [
         entry
         for entry in flow_cache.entries.values()
-        if len(entry.packets) >= packet_count
+        if len(entry.packets) > 0
     ]
 
     parent_sizes: dict[tuple[int, int], int] = {}
@@ -154,9 +168,6 @@ def run_dataset_builder(
     samples: list[dict] = []
 
     for entry in eligible_entries:
-        if len(entry.packets) < packet_count:
-            continue
-
         parent_key = (entry.src_index, entry.flow_id)
         sample = build_dataset_sample(
             entry,
