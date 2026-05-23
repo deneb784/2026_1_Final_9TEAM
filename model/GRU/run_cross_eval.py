@@ -19,6 +19,7 @@ def run_one(command: list[str], log_path: str | None = None) -> None:
 
 
 def build_evaluate_command(
+    python_bin: str,
     model_path: str,
     test_file: str,
     scaler_path: str,
@@ -32,7 +33,7 @@ def build_evaluate_command(
     device: str,
 ) -> list[str]:
     command = [
-        "python3",
+        python_bin,
         "model/GRU/evaluate.py",
         "--model-path",
         model_path,
@@ -64,10 +65,16 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-root", default="runs/gru/cross_eval")
     parser.add_argument("--thresholds", nargs="+", type=float, default=[0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9])
-    parser.add_argument("--tolerances", nargs="+", type=float, default=[0.01, 0.03, 0.05, 0.1])
-    parser.add_argument("--input-size", type=int, default=11)
+    parser.add_argument(
+        "--tolerances",
+        nargs="+",
+        type=float,
+        default=[0.0, 0.0005, 0.001, 0.003, 0.005, 0.01, 0.03, 0.05, 0.1],
+    )
+    parser.add_argument("--input-size", type=int, default=18)
     parser.add_argument("--hidden-size", type=int, default=64)
     parser.add_argument("--device", default="cuda")
+    parser.add_argument("--python", default="python3")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
@@ -110,6 +117,7 @@ def main() -> None:
         log_out = exp_dir / "eval.log"
 
         command = build_evaluate_command(
+            python_bin=args.python,
             model_path=experiment["model_path"],
             test_file=experiment["test_file"],
             scaler_path=experiment["scaler_path"],

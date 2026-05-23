@@ -31,7 +31,9 @@ class FlowCache:
 
     def add_packet(self, meta: RequestMeta, direction: str, pkt: PacketRecord) -> FlowEntry:
         entry = self.get_or_create_entry(meta, direction)
-        entry.packets.append(pkt)
+        entry.payload_bytes += pkt.tcp_len
+        if len(entry.packets) < self.feature_packet_count:
+            entry.packets.append(pkt)
         return entry
 
     def is_ready(self, entry: FlowEntry) -> bool:

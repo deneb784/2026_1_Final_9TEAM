@@ -18,8 +18,8 @@ all: $(TARGETS) move
 move:
 	mkdir -p $(RESULT_DIR)
 	mkdir -p $(BIN_DIR)
-	mv *.o $(TARGETS) $(BIN_DIR)
-	cp $(SCRIPT_DIR)/* $(BIN_DIR)
+	mv -f *.o $(TARGETS) $(BIN_DIR)
+	cp -f $(SCRIPT_DIR)/* $(BIN_DIR)
 
 client: $(CLIENT_OBJS)
 	$(CC) $(CLIENT_OBJS) -o client $(LDFLAGS)

@@ -1,6 +1,31 @@
 from feature_pipeline.models import PacketRecord, RequestMeta
 
 
+def find_time_candidates(
+    candidates: list[RequestMeta],
+    ts_us: int,
+) -> list[RequestMeta]:
+    """start_time_us 기준 정렬된 후보에서 ts_us를 포함할 수 있는 구간만 찾는다."""
+    left = 0
+    right = len(candidates)
+    while left < right:
+        mid = (left + right) // 2
+        if candidates[mid].start_time_us <= ts_us:
+            left = mid + 1
+        else:
+            right = mid
+
+    matched: list[RequestMeta] = []
+    index = left - 1
+    while index >= 0:
+        meta = candidates[index]
+        if meta.stop_time_us < ts_us:
+            break
+        matched.append(meta)
+        index -= 1
+    return matched
+
+
 def get_packet_direction(pkt: PacketRecord, meta: RequestMeta) -> str | None:
     # 정방향: 메타의 src -> dst 와 패킷 방향이 같음
     if (
@@ -34,10 +59,10 @@ def match_packet(
     reverse_key = (pkt.dst_ip, pkt.dst_port, pkt.src_ip, pkt.src_port)
 
     candidates: list[RequestMeta] = []
-    candidates.extend(meta_index.get(forward_key, []))
+    candidates.extend(find_time_candidates(meta_index.get(forward_key, []), pkt.ts_us))
 
     if reverse_key != forward_key:
-        candidates.extend(meta_index.get(reverse_key, []))
+        candidates.extend(find_time_candidates(meta_index.get(reverse_key, []), pkt.ts_us))
 
     matched: list[tuple[RequestMeta, str]] = []
 
@@ -46,8 +71,7 @@ def match_packet(
         if direction is None:
             continue
 
-        if meta.start_time_us <= pkt.ts_us <= meta.stop_time_us:
-            matched.append((meta, direction))
+        matched.append((meta, direction))
 
     if not matched:
         return None

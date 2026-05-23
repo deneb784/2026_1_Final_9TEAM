@@ -36,13 +36,22 @@ class PacketRecord:
 
     frame_len: int
     ip_len: int
+    ip_hdr_len: int
     ip_ttl: int
+    ip_dscp: int
+    ip_ecn: int
 
     tcp_stream: int
     tcp_len: int
+    tcp_hdr_len: int
     tcp_seq: int
     tcp_ack: int
     tcp_flags: str
+    tcp_syn: int
+    tcp_ack_flag: int
+    tcp_psh: int
+    tcp_fin: int
+    tcp_rst: int
     tcp_window_size: int
 
     tcp_time_relative: float
@@ -62,6 +71,7 @@ class FlowEntry:
     logical_flow_id: str
 
     packets: list[PacketRecord] = field(default_factory=list)
+    payload_bytes: int = 0
     feature_sent: bool = False
 
     @property

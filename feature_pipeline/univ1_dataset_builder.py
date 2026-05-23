@@ -7,18 +7,28 @@ from pathlib import Path
 
 
 TSHARK_FIELDS = [
+    # UNI1 pcap에서 직접 뽑아올 tshark 필드 목록이다.
     "frame.number",
     "frame.time_epoch",
     "frame.len",
     "ip.src",
     "ip.dst",
     "ip.len",
+    "ip.hdr_len",
     "ip.ttl",
+    "ip.dsfield.dscp",
+    "ip.dsfield.ecn",
     "tcp.srcport",
     "tcp.dstport",
     "tcp.stream",
     "tcp.len",
+    "tcp.hdr_len",
     "tcp.flags",
+    "tcp.flags.syn",
+    "tcp.flags.ack",
+    "tcp.flags.push",
+    "tcp.flags.fin",
+    "tcp.flags.reset",
     "tcp.window_size",
     "tcp.analysis.retransmission",
     "tcp.analysis.out_of_order",
@@ -27,6 +37,7 @@ TSHARK_FIELDS = [
 ]
 
 QUANTILES_FOR_CDF = [
+    # TrafficGenerator CDF 파일로 저장할 분위수 지점들이다.
     0.0,
     0.01,
     0.05,
@@ -47,16 +58,38 @@ QUANTILES_FOR_CDF = [
     1.0,
 ]
 
-MASKED_FEATURE_INDICES = {
-    7,   # retransmission
-    8,   # out_of_order
-    9,   # duplicate_ack
-    10,  # fast_retransmission
+FEATURE_NAMES = [
+    # dataset JSONL의 x 행 벡터 순서다. add_packet_to_direction()의 feature_packet과 같아야 한다.
+    "direction",
+    "frame_len",
+    "ip_len",
+    "ip_hdr_len",
+    "ip_ttl",
+    "ip_dscp",
+    "ip_ecn",
+    "tcp_len",
+    "tcp_hdr_len",
+    "tcp_syn",
+    "tcp_ack",
+    "tcp_psh",
+    "tcp_fin",
+    "tcp_rst",
+    "tcp_window_size",
+    "iat_us",
+    "elapsed_us",
+    "cum_payload_bytes",
+]
+
+DIRECTION_TO_VALUE = {
+    "src_to_dst": 0,
+    "dst_to_src": 1,
 }
 
 
 @dataclass
 class DirectionState:
+    """TCP stream의 한 방향(src_to_dst 또는 dst_to_src) 누적 상태."""
+
     packet_count: int = 0
     payload_bytes: int = 0
     first_ts_us: int | None = None
@@ -67,6 +100,8 @@ class DirectionState:
 
 @dataclass
 class StreamState:
+    """pcap 파일 안의 tcp.stream 하나를 양방향 flow 단위로 추적하는 상태."""
+
     source_file: str
     tcp_stream: int
     src_ip: str
@@ -80,20 +115,28 @@ class StreamState:
 
 
 def to_int(value: str, default: int = 0) -> int:
+    """tshark field 값을 int로 변환한다."""
     if value == "":
         return default
     if "," in value:
+        # tshark가 같은 필드를 여러 값으로 출력하면 첫 번째 값만 사용한다.
         value = value.split(",", 1)[0]
+    if value in ("True", "true"):
+        return 1
+    if value in ("False", "false"):
+        return 0
     return int(float(value))
 
 
 def to_ts_us(value: str) -> int:
+    """초 단위 epoch timestamp를 microsecond 정수로 변환한다."""
     if "," in value:
         value = value.split(",", 1)[0]
     return int(float(value) * 1_000_000)
 
 
 def tcp_flags_to_int(value: str) -> int:
+    """16진수 TCP flags 문자열을 정수로 변환한다."""
     if value == "":
         return 0
     if "," in value:
@@ -105,10 +148,12 @@ def tcp_flags_to_int(value: str) -> int:
 
 
 def to_flag(value: str) -> int:
+    """tshark flag 필드를 0/1 feature로 변환한다."""
     return 0 if value in ("", "0", "False", "false") else 1
 
 
 def find_univ1_pcaps(pcap_dir: Path) -> list[Path]:
+    """UNI1 trace 파일 중 univ1_pt1.pcap부터 univ1_pt20.pcap까지 찾는다."""
     files = []
     for path in pcap_dir.glob("univ1_pt*.pcap"):
         if "old" in path.stem:
@@ -120,6 +165,7 @@ def find_univ1_pcaps(pcap_dir: Path) -> list[Path]:
 
 
 def iter_tshark_rows(path: Path):
+    """pcap을 tshark로 스트리밍 처리해 row dict를 하나씩 반환한다."""
     cmd = ["tshark", "-r", str(path), "-Y", "tcp", "-T", "fields"]
     for field_name in TSHARK_FIELDS:
         cmd.extend(["-e", field_name])
@@ -135,8 +181,10 @@ def iter_tshark_rows(path: Path):
     for line in proc.stdout:
         values = line.rstrip("\n").split("\t")
         if len(values) < len(TSHARK_FIELDS):
+            # 비어 있는 뒤쪽 필드는 split 결과에서 빠질 수 있으므로 빈 문자열로 채운다.
             values.extend([""] * (len(TSHARK_FIELDS) - len(values)))
         elif len(values) > len(TSHARK_FIELDS):
+            # 예상보다 많은 값이 있으면 현재 feature pipeline에서 쓰는 필드만 남긴다.
             values = values[: len(TSHARK_FIELDS)]
         yield dict(zip(TSHARK_FIELDS, values))
 
@@ -148,38 +196,50 @@ def iter_tshark_rows(path: Path):
 
 def add_packet_to_direction(
     direction: DirectionState,
+    direction_name: str,
     row: dict[str, str],
     ts_us: int,
     packet_count: int,
     mask_analysis_features: bool = True,
 ) -> None:
+    """패킷 row 하나를 특정 방향 상태에 누적하고, 초반 packet_count개 feature를 저장한다."""
+    # iat_us는 해당 방향에서 직전 패킷과의 간격이다.
     iat_us = 0 if direction.prev_ts_us is None else ts_us - direction.prev_ts_us
+    first_ts_us = ts_us if direction.first_ts_us is None else direction.first_ts_us
+    # elapsed_us는 해당 방향의 첫 패킷 이후 경과 시간이다.
+    elapsed_us = ts_us - first_ts_us
     direction.prev_ts_us = ts_us
 
     direction.packet_count += 1
+    # payload_bytes는 라벨링과 flow 크기 계산의 기준으로 사용한다.
     direction.payload_bytes += to_int(row["tcp.len"])
-    direction.first_ts_us = ts_us if direction.first_ts_us is None else min(direction.first_ts_us, ts_us)
+    direction.first_ts_us = first_ts_us
     direction.last_ts_us = ts_us if direction.last_ts_us is None else max(direction.last_ts_us, ts_us)
 
     if len(direction.feature_packets) >= packet_count:
+        # 학습 입력은 앞 packet_count개만 쓰지만, byte/packet 통계는 위에서 계속 누적한다.
         return
 
     feature_packet = [
+        DIRECTION_TO_VALUE[direction_name],
         to_int(row["frame.len"]),
         to_int(row["ip.len"]),
+        to_int(row["ip.hdr_len"]),
         to_int(row["ip.ttl"]),
+        to_int(row["ip.dsfield.dscp"]),
+        to_int(row["ip.dsfield.ecn"]),
         to_int(row["tcp.len"]),
-        tcp_flags_to_int(row["tcp.flags"]),
+        to_int(row["tcp.hdr_len"]),
+        to_int(row["tcp.flags.syn"]),
+        to_int(row["tcp.flags.ack"]),
+        to_int(row["tcp.flags.push"]),
+        to_int(row["tcp.flags.fin"]),
+        to_int(row["tcp.flags.reset"]),
         to_int(row["tcp.window_size"]),
         iat_us,
-        to_flag(row["tcp.analysis.retransmission"]),
-        to_flag(row["tcp.analysis.out_of_order"]),
-        to_flag(row["tcp.analysis.duplicate_ack"]),
-        to_flag(row["tcp.analysis.fast_retransmission"]),
+        elapsed_us,
+        direction.payload_bytes,
     ]
-    if mask_analysis_features:
-        for index in MASKED_FEATURE_INDICES:
-            feature_packet[index] = 0
     direction.feature_packets.append(feature_packet)
 
 
@@ -188,6 +248,7 @@ def build_stream_states(
     packet_count: int,
     mask_analysis_features: bool = True,
 ) -> dict[tuple[str, int], StreamState]:
+    """여러 UNI1 pcap의 TCP stream을 읽어 양방향 상태로 묶는다."""
     streams: dict[tuple[str, int], StreamState] = {}
 
     for pcap_file in pcap_files:
@@ -209,6 +270,7 @@ def build_stream_states(
             stream = streams.get(key)
 
             if stream is None:
+                # stream의 첫 패킷 방향을 기준으로 forward 5-tuple을 고정한다.
                 stream = StreamState(
                     source_file=source_file,
                     tcp_stream=tcp_stream,
@@ -225,16 +287,20 @@ def build_stream_states(
             stream.last_ts_us = max(stream.last_ts_us, ts_us)
 
             if src_ip == stream.src_ip and src_port == stream.src_port and dst_ip == stream.dst_ip and dst_port == stream.dst_port:
+                # 첫 패킷과 같은 5-tuple 방향은 src_to_dst로 본다.
                 add_packet_to_direction(
                     stream.fwd,
+                    "src_to_dst",
                     row,
                     ts_us,
                     packet_count,
                     mask_analysis_features=mask_analysis_features,
                 )
             elif src_ip == stream.dst_ip and src_port == stream.dst_port and dst_ip == stream.src_ip and dst_port == stream.src_port:
+                # 반대 5-tuple은 dst_to_src로 본다.
                 add_packet_to_direction(
                     stream.rev,
+                    "dst_to_src",
                     row,
                     ts_us,
                     packet_count,
@@ -245,6 +311,7 @@ def build_stream_states(
 
 
 def percentile(sorted_values: list[int], q: float) -> int:
+    """정렬된 값 목록에서 단순 분위수 값을 반환한다."""
     if not sorted_values:
         return 0
     if q <= 0:
@@ -256,21 +323,25 @@ def percentile(sorted_values: list[int], q: float) -> int:
 
 
 def flow_size_bytes(stream: StreamState) -> int:
+    """양방향 중 더 큰 payload byte를 flow 크기로 사용한다."""
     return max(stream.fwd.payload_bytes, stream.rev.payload_bytes)
 
 
 def dominant_direction(stream: StreamState) -> tuple[str, DirectionState]:
+    """payload가 더 큰 방향을 반환한다."""
     if stream.rev.payload_bytes > stream.fwd.payload_bytes:
         return "dst_to_src", stream.rev
     return "src_to_dst", stream.fwd
 
 
 def iter_directional_states(stream: StreamState):
+    """stream의 양방향 상태를 고정 순서로 순회한다."""
     yield "src_to_dst", stream.fwd
     yield "dst_to_src", stream.rev
 
 
 def pad_feature_packets(feature_packets: list[list[int]], packet_count: int) -> tuple[list[list[int]], int]:
+    """가변 길이 패킷 feature를 고정 길이로 padding한다."""
     seq_len = min(len(feature_packets), packet_count)
     padded = [list(row) for row in feature_packets[:packet_count]]
 
@@ -278,12 +349,14 @@ def pad_feature_packets(feature_packets: list[list[int]], packet_count: int) -> 
         return padded, 0
 
     while len(padded) < packet_count:
+        # 패킷이 부족한 flow는 마지막 관측 feature를 반복한다.
         padded.append(list(padded[-1]))
 
     return padded, seq_len
 
 
 def write_stats_csv(streams: list[StreamState], output_path: Path) -> None:
+    """stream별 기본 통계를 CSV로 저장한다."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
@@ -323,43 +396,57 @@ def write_dataset_jsonl(
     threshold: int,
     packet_count: int,
     output_path: Path,
+    raw_sequences: bool = False,
 ) -> int:
+    """UNI1 stream 상태를 학습용 JSONL sample로 저장한다."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     count = 0
     with output_path.open("w", encoding="utf-8") as f:
         for flow_id, stream in enumerate(streams, start=1):
             parent_size_bytes = flow_size_bytes(stream)
             if parent_size_bytes <= 0:
+                # payload가 없는 stream은 학습 라벨을 만들 수 없으므로 제외한다.
                 continue
 
             for direction_name, direction in iter_directional_states(stream):
                 if not direction.feature_packets:
+                    # 해당 방향에 관측된 feature packet이 없으면 sample을 만들지 않는다.
                     continue
 
-                x, seq_len = pad_feature_packets(direction.feature_packets, packet_count)
+                if raw_sequences:
+                    x = [list(row) for row in direction.feature_packets[:packet_count]]
+                    seq_len = None
+                else:
+                    x, seq_len = pad_feature_packets(direction.feature_packets, packet_count)
+
                 sample = {
+                    # UNI1은 TrafficGenerator의 src_index가 없으므로 src_index는 0으로 고정한다.
                     "flow_key": {
                         "src_index": 0,
                         "flow_id": flow_id,
                         "direction": direction_name,
                     },
                     "trace_key": {
+                        # 원본 pcap/tcp.stream으로 다시 추적하기 위한 키다.
                         "source_file": stream.source_file,
                         "tcp_stream": stream.tcp_stream,
                     },
+                    "feature_names": FEATURE_NAMES,
                     "x": x,
-                    "seq_len": seq_len,
                     "directional_size_bytes": direction.payload_bytes,
                     "parent_flow_size_bytes": parent_size_bytes,
                     "flow_size_bytes": direction.payload_bytes,
                     "label": 1 if direction.payload_bytes >= threshold else 0,
                 }
+                if seq_len is not None:
+                    sample["seq_len"] = seq_len
                 f.write(json.dumps(sample, ensure_ascii=False) + "\n")
                 count += 1
     return count
 
 
 def write_cdf(sizes: list[int], output_path: Path) -> None:
+    """UNI1 flow 크기 분포를 TrafficGenerator가 읽을 수 있는 CDF 형식으로 저장한다."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     sorted_sizes = sorted(sizes)
     rows: list[tuple[int, float]] = []
@@ -367,6 +454,7 @@ def write_cdf(sizes: list[int], output_path: Path) -> None:
     for q in QUANTILES_FOR_CDF:
         value = percentile(sorted_sizes, q)
         if rows and rows[-1][0] == value:
+            # 같은 byte 값이 연속되면 더 높은 분위수로 갱신해 CDF 행을 압축한다.
             rows[-1] = (value, q)
         else:
             rows.append((value, q))
@@ -384,6 +472,7 @@ def write_cdf(sizes: list[int], output_path: Path) -> None:
 
 
 def is_dataset_candidate(stream: StreamState, packet_count: int) -> bool:
+    """dataset sample을 만들 수 있는 방향이 하나라도 있는지 확인한다."""
     return any(
         direction.payload_bytes > 0 and len(direction.feature_packets) > 0
         for _, direction in iter_directional_states(stream)
@@ -397,6 +486,7 @@ def write_summary(
     threshold: int,
     output_path: Path,
 ) -> None:
+    """UNI1 변환 결과 요약 통계를 JSON으로 저장한다."""
     sorted_sizes = sorted(sizes)
     sorted_candidate_sizes = sorted(dataset_candidate_sizes)
     summary = {
@@ -424,6 +514,7 @@ def write_summary(
 
 
 def main() -> None:
+    """UNI1 pcap trace에서 dataset, 통계 CSV, CDF, summary를 생성한다."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--pcap-dir", default="data/univ1_trace")
     parser.add_argument("--packet-count", type=int, default=8)
@@ -432,9 +523,14 @@ def main() -> None:
     parser.add_argument("--summary-out", default="analyze/univ1_summary.json")
     parser.add_argument("--cdf-out", default="TrafficGenerator/conf/UNI1_CDF.txt")
     parser.add_argument(
+        "--raw-sequences",
+        action="store_true",
+        help="write only observed packets in x and omit seq_len; padding can be applied later",
+    )
+    parser.add_argument(
         "--no-mask-analysis-features",
         action="store_true",
-        help="keep retransmission/out_of_order/duplicate_ack/fast_retransmission values instead of zero-masking them",
+        help="deprecated; tcp.analysis.* fields are no longer emitted in model features",
     )
     args = parser.parse_args()
 
@@ -442,6 +538,7 @@ def main() -> None:
     if not pcap_files:
         raise SystemExit(f"no univ1_pt*.pcap files found in {args.pcap_dir}")
 
+    # pcap 전체를 TCP stream 단위로 먼저 모은 뒤, 아래에서 dataset/stat/CDF를 각각 쓴다.
     streams_by_key = build_stream_states(
         pcap_files,
         args.packet_count,
@@ -450,6 +547,7 @@ def main() -> None:
     streams = list(streams_by_key.values())
     sizes = [flow_size_bytes(stream) for stream in streams if flow_size_bytes(stream) > 0]
     dataset_candidate_sizes = [
+        # 실제 JSONL sample이 만들어질 수 있는 방향별 payload 크기만 라벨 기준에 사용한다.
         direction.payload_bytes
         for stream in streams
         for _, direction in iter_directional_states(stream)
@@ -458,7 +556,13 @@ def main() -> None:
     threshold = percentile(sorted(dataset_candidate_sizes), 0.80)
 
     write_stats_csv(streams, Path(args.stats_out))
-    dataset_count = write_dataset_jsonl(streams, threshold, args.packet_count, Path(args.dataset_out))
+    dataset_count = write_dataset_jsonl(
+        streams,
+        threshold,
+        args.packet_count,
+        Path(args.dataset_out),
+        raw_sequences=args.raw_sequences,
+    )
     write_cdf(sizes, Path(args.cdf_out))
     write_summary(streams, sizes, dataset_candidate_sizes, threshold, Path(args.summary_out))
 

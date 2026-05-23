@@ -3,7 +3,7 @@ import torch.nn as nn
 
 
 class DiffEarlyExitGRU(nn.Module):
-    def __init__(self, input_size=11, hidden_size=64):
+    def __init__(self, input_size=18, hidden_size=64):
         super(DiffEarlyExitGRU, self).__init__()
         self.hidden_size = hidden_size
         self.input_size = input_size
@@ -14,7 +14,7 @@ class DiffEarlyExitGRU(nn.Module):
         # 2. 방향 임베딩과 첫 번째 패킷(x_0)을 결합하여 초기 은닉 상태(h_0)를 만드는 레이어
         self.init_h_layer = nn.Linear(hidden_size + input_size, hidden_size)
         
-        # 3. 매 time step 마다 제어하기 위해 nn.GRUCell 사용 (입력은 차이값 11차원)
+        # 3. 매 time step 마다 제어하기 위해 nn.GRUCell 사용
         self.gru_cell = nn.GRUCell(input_size=input_size, hidden_size=hidden_size)
         
         # 4. 0~1 사이의 연속적인 추론값(수치)을 도출하기 위한 출력층

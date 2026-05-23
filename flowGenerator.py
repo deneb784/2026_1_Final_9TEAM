@@ -61,6 +61,12 @@ def flowGenerator(
     for f in [os.path.join(results_dir, 'flows.txt')] + [
         os.path.join(results_dir, 'flows_%s.txt' % i)
         for i in range(len(srcHosts))
+    ] + [
+        os.path.join(results_dir, 'flows_%s_meta.csv' % i)
+        for i in range(len(srcHosts))
+    ] + [
+        os.path.join(results_dir, 'log_%s.txt' % i)
+        for i in range(len(srcHosts))
     ]:
         if os.path.exists(f):
             os.remove(f)
@@ -98,6 +104,9 @@ def flowGenerator(
 
     for srcIndex, srcHost, process in processes:
         return_code = process.wait()
+        log_file = getattr(process, '_log_file', None)
+        if log_file is not None:
+            log_file.close()
         if return_code != 0:
             print('[!] %s client 종료 코드: %s' % (srcHost.name, return_code))
 

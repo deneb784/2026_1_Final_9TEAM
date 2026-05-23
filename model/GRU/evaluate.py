@@ -15,6 +15,7 @@ except ImportError:
 
 
 def confusion_counts(y_true: list[int], y_pred: list[int]) -> dict[str, int]:
+    """이진 분류 결과를 TN/FP/FN/TP로 집계한다."""
     tp = sum(1 for true, pred in zip(y_true, y_pred) if true == 1 and pred == 1)
     tn = sum(1 for true, pred in zip(y_true, y_pred) if true == 0 and pred == 0)
     fp = sum(1 for true, pred in zip(y_true, y_pred) if true == 0 and pred == 1)
@@ -23,6 +24,7 @@ def confusion_counts(y_true: list[int], y_pred: list[int]) -> dict[str, int]:
 
 
 def classification_metrics(y_true: list[int], scores: list[float], threshold: float) -> dict[str, float | int]:
+    """예측 score를 threshold로 이진화한 뒤 주요 분류 지표를 계산한다."""
     y_pred = [1 if score >= threshold else 0 for score in scores]
     cm = confusion_counts(y_true, y_pred)
     total = len(y_true)
@@ -41,6 +43,7 @@ def classification_metrics(y_true: list[int], scores: list[float], threshold: fl
 
 
 def average_precision(y_true: list[int], scores: list[float]) -> float | None:
+    """score 내림차순 ranking 기준 Average Precision(PR-AUC)을 계산한다."""
     positives = sum(y_true)
     if positives == 0:
         return None
@@ -50,12 +53,14 @@ def average_precision(y_true: list[int], scores: list[float]) -> float | None:
     precision_sum = 0.0
     for rank, (_, label) in enumerate(ranked, start=1):
         if label == 1:
+            # positive를 하나 더 맞힌 지점의 precision을 누적한다.
             hit_count += 1
             precision_sum += hit_count / rank
     return precision_sum / positives
 
 
 def roc_auc(y_true: list[int], scores: list[float]) -> float | None:
+    """rank-sum 방식으로 ROC-AUC를 계산한다."""
     positives = sum(y_true)
     negatives = len(y_true) - positives
     if positives == 0 or negatives == 0:
@@ -65,6 +70,7 @@ def roc_auc(y_true: list[int], scores: list[float]) -> float | None:
     ranks = [0.0] * len(scores)
     start = 0
     while start < len(indexed_scores):
+        # 같은 score는 같은 평균 rank를 주어 tie를 처리한다.
         end = start
         while end + 1 < len(indexed_scores) and indexed_scores[end + 1][0] == indexed_scores[start][0]:
             end += 1
@@ -79,18 +85,22 @@ def roc_auc(y_true: list[int], scores: list[float]) -> float | None:
 
 
 def build_truth(samples: list[dict], label_mode: str, cdf_method: str, size_field: str, threshold: float) -> list[int]:
+    """평가 기준에 맞는 binary ground truth를 만든다."""
     if label_mode == "label":
         return [int(sample["label"]) for sample in samples]
 
+    # label_mode=cdf일 때는 flow size CDF가 threshold 이상이면 positive로 본다.
     cdfs = compute_cdf_targets(samples, size_field=size_field, method=cdf_method)
     return [1 if cdf >= threshold else 0 for cdf in cdfs]
 
 
 def build_cdfs(samples: list[dict], cdf_method: str, size_field: str) -> list[float]:
+    """plot용 true CDF 값을 계산한다."""
     return compute_cdf_targets(samples, size_field=size_field, method=cdf_method)
 
 
 def jittered_binary_x(values: list[int], jitter: float = 0.08) -> list[float]:
+    """binary label 산점도에서 점이 겹치지 않도록 x축에 작은 흔들림을 준다."""
     if not values:
         return []
 
@@ -99,10 +109,63 @@ def jittered_binary_x(values: list[int], jitter: float = 0.08) -> list[float]:
     return [value + ((index % window) - centered) * (jitter / window) for index, value in enumerate(values)]
 
 
+def percentile(values: list[float], q: float) -> float:
+    """선형 보간을 사용하는 분위수 값을 계산한다."""
+    if not values:
+        return 0.0
+    if q <= 0:
+        return min(values)
+    if q >= 1:
+        return max(values)
+
+    sorted_values = sorted(values)
+    position = (len(sorted_values) - 1) * q
+    lower = int(position)
+    upper = min(lower + 1, len(sorted_values) - 1)
+    if lower == upper:
+        return sorted_values[lower]
+
+    weight = position - lower
+    return sorted_values[lower] * (1 - weight) + sorted_values[upper] * weight
+
+
+def observed_latency_ms(samples: list[dict], exit_steps: list[int], feature_index: int) -> list[float]:
+    """early-exit 시점까지 관측한 packet feature 기반 지연 시간을 ms 단위로 계산한다."""
+    latencies: list[float] = []
+    for sample, step in zip(samples, exit_steps):
+        rows = sample["x"][:step]
+        # 기본 feature_index=15는 dataset_builder의 iat_us 열이다.
+        observed_us = sum(float(row[feature_index]) for row in rows if feature_index < len(row))
+        latencies.append(observed_us / 1000)
+    return latencies
+
+
+def latency_summary(latencies_ms: list[float]) -> dict[str, float]:
+    """관측 지연 시간의 평균/분위수 요약을 만든다."""
+    if not latencies_ms:
+        return {
+            "avg_observed_ms": 0.0,
+            "median_observed_ms": 0.0,
+            "p90_observed_ms": 0.0,
+            "p99_observed_ms": 0.0,
+            "max_observed_ms": 0.0,
+        }
+
+    return {
+        "avg_observed_ms": sum(latencies_ms) / len(latencies_ms),
+        "median_observed_ms": percentile(latencies_ms, 0.50),
+        "p90_observed_ms": percentile(latencies_ms, 0.90),
+        "p99_observed_ms": percentile(latencies_ms, 0.99),
+        "max_observed_ms": max(latencies_ms),
+    }
+
+
 def load_model(model_path: str | Path, device: torch.device, input_size: int, hidden_size: int) -> DiffEarlyExitGRU:
+    """checkpoint 파일에서 GRU 모델 가중치를 로드한다."""
     model = DiffEarlyExitGRU(input_size=input_size, hidden_size=hidden_size).to(device)
     state = torch.load(model_path, map_location=device)
     if isinstance(state, dict) and "model_state_dict" in state:
+        # train.py가 저장한 전체 checkpoint 형식과 state_dict 단독 저장 형식을 모두 지원한다.
         state = state["model_state_dict"]
     model.load_state_dict(state)
     model.eval()
@@ -115,6 +178,7 @@ def run_inference(
     device: torch.device,
     tolerance: float,
 ) -> tuple[list[float], list[int], list[float]]:
+    """test dataset 전체에 대해 early-exit 추론을 수행한다."""
     scores: list[float] = []
     exit_steps: list[int] = []
     inference_times: list[float] = []
@@ -128,6 +192,7 @@ def run_inference(
             if device.type == "cuda":
                 torch.cuda.synchronize()
             start_time = time.perf_counter()
+            # tolerance가 작을수록 보통 더 오래 관측하고, 클수록 더 빨리 종료할 수 있다.
             score, step = model(
                 x,
                 direction,
@@ -147,6 +212,7 @@ def run_inference(
 
 
 def write_threshold_sweep(rows: list[dict], path: str | Path) -> None:
+    """threshold sweep 결과를 CSV로 저장한다."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as f:
@@ -178,6 +244,7 @@ def save_scatter(
     x_label: str,
     title_suffix: str = "",
 ) -> None:
+    """true label/CDF와 predicted score 관계를 산점도로 저장한다."""
     import matplotlib.pyplot as plt
 
     path = Path(path)
@@ -208,6 +275,7 @@ def save_scatter(
 
 
 def main() -> None:
+    """저장된 모델 checkpoint를 test JSONL에서 평가한다."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-path", required=True)
     parser.add_argument("--test-file", required=True)
@@ -218,8 +286,9 @@ def main() -> None:
     parser.add_argument("--size-field", default="flow_size_bytes")
     parser.add_argument("--thresholds", nargs="+", type=float, default=[0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95])
     parser.add_argument("--tolerances", nargs="+", type=float, default=[0.01])
-    parser.add_argument("--input-size", type=int, default=11)
+    parser.add_argument("--input-size", type=int, default=18)
     parser.add_argument("--hidden-size", type=int, default=64)
+    parser.add_argument("--latency-feature-index", type=int, default=15)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--metrics-out")
     parser.add_argument("--sweep-out")
@@ -232,8 +301,10 @@ def main() -> None:
     raw_samples = FlowJsonlDataset(args.test_file).samples
     scaler = None
     if args.scaler_path:
+        # 학습 때 저장한 scaler가 있으면 같은 정규화 기준을 사용한다.
         scaler = FeatureScaler.load(args.scaler_path)
     elif args.fit_scaler_on_test:
+        # 비교 실험용 옵션: test set 자체에서 scaler를 맞춘다.
         scaler = fit_feature_scaler(raw_samples, input_size=args.input_size)
 
     dataset = FlowJsonlDataset(
@@ -251,6 +322,7 @@ def main() -> None:
     tolerance_results: list[dict] = []
 
     for tolerance in args.tolerances:
+        # tolerance별로 early-exit 시점과 score가 달라지므로 전체 평가를 반복한다.
         scores, exit_steps, inference_times = run_inference(model, dataset, device, tolerance=tolerance)
 
         y_true_for_auc = build_truth(
@@ -265,6 +337,7 @@ def main() -> None:
 
         rows = []
         for threshold in args.thresholds:
+            # 같은 score에 대해 여러 decision threshold를 훑어 최적 F1 지점을 찾는다.
             y_true = build_truth(
                 samples,
                 label_mode=args.label_mode,
@@ -280,8 +353,11 @@ def main() -> None:
         best_f1 = max(rows, key=lambda row: row["f1"])
         avg_time = sum(inference_times) / len(inference_times) if inference_times else 0.0
         avg_step = sum(exit_steps) / len(exit_steps) if exit_steps else 0.0
+        observed_ms = observed_latency_ms(samples, exit_steps, feature_index=args.latency_feature_index)
+        observed_summary = latency_summary(observed_ms)
 
         if args.plot_out:
+            # plot_out이 파일명이면 tolerance별 suffix를 붙이고, 디렉터리면 기본 파일명을 생성한다.
             plot_path = Path(args.plot_out)
             if plot_path.suffix:
                 if len(args.tolerances) == 1:
@@ -318,6 +394,7 @@ def main() -> None:
             "min_inference_ms": min(inference_times) if inference_times else 0.0,
             "max_inference_ms": max(inference_times) if inference_times else 0.0,
             "avg_exit_step": avg_step,
+            **observed_summary,
             "best_f1": best_f1,
         }
         tolerance_results.append(tolerance_result)
@@ -328,6 +405,13 @@ def main() -> None:
         print(f"ROC-AUC:   {roc if roc is not None else 'n/a'}")
         print(f"Avg inference: {avg_time:.4f} ms")
         print(f"Avg exit step: {avg_step:.2f}")
+        print(
+            "Observed latency: "
+            f"avg={observed_summary['avg_observed_ms']:.4f} ms "
+            f"median={observed_summary['median_observed_ms']:.4f} ms "
+            f"p90={observed_summary['p90_observed_ms']:.4f} ms "
+            f"p99={observed_summary['p99_observed_ms']:.4f} ms"
+        )
         print("threshold sweep:")
         for row in rows:
             print(
