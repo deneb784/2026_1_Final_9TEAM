@@ -3,6 +3,8 @@
 import os
 import signal
 import subprocess
+import sys
+import time
 from dataclasses import dataclass
 
 
@@ -86,3 +88,230 @@ class PacketCapturer:
             stderr_target = getattr(process, "_stderr_target", None)
             if stderr_target not in (None, subprocess.DEVNULL):
                 stderr_target.close()
+
+
+class XdpPacketCapturer:
+    """여러 인터페이스에 XDP 캡처 프로그램을 붙여 온라인 FlowCache까지 전달한다."""
+
+    def __init__(
+        self,
+        interfaces: list[str],
+        log_dir: str | None = None,
+        xdp_mode: str = "skb",
+        feature_packet_count: int = 10,
+        server_port: int = 5001,
+        k: int = 4,
+        run_id: str | None = None,
+        redis_url: str | None = None,
+        redis_stream: str = "flow_features",
+        redis_stream_maxlen: int | None = None,
+        publish_direction: str = "dst_to_src",
+        project_root: str | None = None,
+        startup_wait_sec: float = 3.0,
+    ):
+        self.interfaces = interfaces
+        self.log_dir = log_dir
+        self.xdp_mode = xdp_mode
+        self.feature_packet_count = feature_packet_count
+        self.server_port = server_port
+        self.k = k
+        self.run_id = run_id
+        self.redis_url = redis_url
+        self.redis_stream = redis_stream
+        self.redis_stream_maxlen = redis_stream_maxlen
+        self.publish_direction = publish_direction
+        self.project_root = project_root or os.path.abspath(os.path.dirname(__file__))
+        self.startup_wait_sec = startup_wait_sec
+        self.process: subprocess.Popen | None = None
+        self._stdout_target = None
+        self._stderr_target = None
+
+    def start(self) -> None:
+        """XDP 캡처 subprocess를 시작한다."""
+        if not self.interfaces:
+            return
+
+        if self.log_dir is not None:
+            os.makedirs(self.log_dir, exist_ok=True)
+            self._stdout_target = open(
+                os.path.join(self.log_dir, "xdp_capture.stdout.txt"),
+                "w",
+                encoding="utf-8",
+            )
+            self._stderr_target = open(
+                os.path.join(self.log_dir, "xdp_capture.stderr.txt"),
+                "w",
+                encoding="utf-8",
+            )
+        else:
+            self._stdout_target = subprocess.DEVNULL
+            self._stderr_target = subprocess.DEVNULL
+
+        script = os.path.join(self.project_root, "xdp", "tg_xdp_capture.py")
+        cmd = [
+            sys.executable,
+            script,
+            "-i",
+            *self.interfaces,
+            "--xdp-mode",
+            self.xdp_mode,
+            "--feature-packet-count",
+            str(self.feature_packet_count),
+            "--server-port",
+            str(self.server_port),
+            "--k",
+            str(self.k),
+            "--publish-direction",
+            self.publish_direction,
+            "--print-ready",
+        ]
+        if self.run_id is not None:
+            cmd += ["--run-id", self.run_id]
+        if self.redis_url is not None:
+            cmd += ["--redis-url", self.redis_url, "--redis-stream", self.redis_stream]
+            if self.redis_stream_maxlen is not None:
+                cmd += ["--redis-stream-maxlen", str(self.redis_stream_maxlen)]
+        self.process = subprocess.Popen(
+            cmd,
+            cwd=self.project_root,
+            stdout=self._stdout_target,
+            stderr=self._stderr_target,
+        )
+        time.sleep(self.startup_wait_sec)
+        if self.process.poll() is not None:
+            raise RuntimeError("XDP 캡처 프로세스가 시작 직후 종료되었습니다. xdp_capture.stderr.txt를 확인하세요.")
+
+    def stop(self) -> None:
+        """XDP 캡처 subprocess를 종료해 attach된 XDP 프로그램을 detach한다."""
+        if self.process is not None and self.process.poll() is None:
+            self.process.send_signal(signal.SIGINT)
+            try:
+                self.process.wait(timeout=3.0)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait()
+
+        for target in (self._stdout_target, self._stderr_target):
+            if target not in (None, subprocess.DEVNULL):
+                target.close()
+
+
+class NodeXdpPacketCapturer:
+    """각 Mininet node namespace 안에서 host-facing 인터페이스에 XDP를 붙인다."""
+
+    def __init__(
+        self,
+        capture_points: list[CapturePoint],
+        log_dir: str | None = None,
+        xdp_mode: str = "skb",
+        feature_packet_count: int = 10,
+        server_port: int = 5001,
+        k: int = 4,
+        run_id: str | None = None,
+        redis_url: str | None = None,
+        redis_stream: str = "flow_features",
+        redis_stream_maxlen: int | None = None,
+        publish_direction: str = "dst_to_src",
+        project_root: str | None = None,
+        startup_wait_sec: float = 3.0,
+    ):
+        self.capture_points = capture_points
+        self.log_dir = log_dir
+        self.xdp_mode = xdp_mode
+        self.feature_packet_count = feature_packet_count
+        self.server_port = server_port
+        self.k = k
+        self.run_id = run_id
+        self.redis_url = redis_url
+        self.redis_stream = redis_stream
+        self.redis_stream_maxlen = redis_stream_maxlen
+        self.publish_direction = publish_direction
+        self.project_root = project_root or os.path.abspath(os.path.dirname(__file__))
+        self.startup_wait_sec = startup_wait_sec
+        self.processes: list[subprocess.Popen] = []
+
+    def start(self) -> None:
+        """각 capture point의 node namespace에서 XDP 캡처 subprocess를 시작한다."""
+        if self.log_dir is not None:
+            os.makedirs(self.log_dir, exist_ok=True)
+
+        script = os.path.join(self.project_root, "xdp", "tg_xdp_capture.py")
+        for cp in self.capture_points:
+            output_name = cp.output_name or cp.interface
+            stdout_target = subprocess.DEVNULL
+            stderr_target = subprocess.DEVNULL
+            if self.log_dir is not None:
+                stdout_target = open(
+                    os.path.join(self.log_dir, "%s.xdp.stdout.txt" % output_name),
+                    "w",
+                    encoding="utf-8",
+                )
+                stderr_target = open(
+                    os.path.join(self.log_dir, "%s.xdp.stderr.txt" % output_name),
+                    "w",
+                    encoding="utf-8",
+                )
+
+            cmd = [
+                sys.executable,
+                script,
+                "-i",
+                cp.interface,
+                "--xdp-mode",
+                self.xdp_mode,
+                "--feature-packet-count",
+                str(self.feature_packet_count),
+                "--server-port",
+                str(self.server_port),
+                "--k",
+                str(self.k),
+                "--publish-direction",
+                self.publish_direction,
+                "--print-ready",
+            ]
+            if self.run_id is not None:
+                cmd += ["--run-id", self.run_id]
+            if self.redis_url is not None:
+                cmd += ["--redis-url", self.redis_url, "--redis-stream", self.redis_stream]
+                if self.redis_stream_maxlen is not None:
+                    cmd += ["--redis-stream-maxlen", str(self.redis_stream_maxlen)]
+            process = cp.node.popen(
+                cmd,
+                cwd=self.project_root,
+                stdout=stdout_target,
+                stderr=stderr_target,
+            )
+            process._stdout_target = stdout_target
+            process._stderr_target = stderr_target
+            process._output_name = output_name
+            self.processes.append(process)
+
+        time.sleep(self.startup_wait_sec)
+        failed = [
+            getattr(process, "_output_name", "unknown")
+            for process in self.processes
+            if process.poll() is not None
+        ]
+        if failed:
+            raise RuntimeError(
+                "XDP 캡처 프로세스가 시작 직후 종료되었습니다: %s. "
+                "해당 *.xdp.stderr.txt를 확인하세요." % ", ".join(failed)
+            )
+
+    def stop(self) -> None:
+        """모든 node namespace XDP 캡처 subprocess를 종료한다."""
+        for process in self.processes:
+            if process.poll() is not None:
+                continue
+            process.send_signal(signal.SIGINT)
+            try:
+                process.wait(timeout=3.0)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+
+        for process in self.processes:
+            for target_name in ("_stdout_target", "_stderr_target"):
+                target = getattr(process, target_name, None)
+                if target not in (None, subprocess.DEVNULL):
+                    target.close()

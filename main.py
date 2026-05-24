@@ -5,7 +5,7 @@ from mininet.log import setLogLevel
 
 from topoBuilder import fatTreeBuilder
 from flowGenerator import flowGenerator
-from packet_captuer import CapturePoint, PacketCapturer
+from packet_captuer import CapturePoint, PacketCapturer, NodeXdpPacketCapturer
 # from analyze.ecmp_verification import run_ecmp_verification
 
 """
@@ -77,6 +77,17 @@ if __name__ == '__main__':
     parser.add_argument('--load-mbps', type=int, default=80)
     parser.add_argument('--seed-base', type=int, default=1000)
     parser.add_argument('--cdf-file', default='UNI1_CDF.txt')
+    parser.add_argument('--capture-mode', choices=['tshark', 'xdp', 'none'], default='tshark')
+    parser.add_argument('--xdp-mode', choices=['skb', 'native', 'hw'], default='skb')
+    parser.add_argument('--feature-packet-count', type=int, default=10)
+    parser.add_argument('--redis-url', default=None)
+    parser.add_argument('--redis-stream', default='flow_features')
+    parser.add_argument('--redis-stream-maxlen', type=int, default=None)
+    parser.add_argument(
+        '--publish-direction',
+        choices=['src_to_dst', 'dst_to_src', 'all'],
+        default='dst_to_src',
+    )
     args = parser.parse_args()
 
     flowsPerPair = args.flowsPerPair
@@ -99,6 +110,7 @@ if __name__ == '__main__':
     # Ryu 컨트롤러 백그라운드 실행
     print('[*] Ryu 컨트롤러 시작 중...')
     network = None
+    capturer = None
     ryu_proc = subprocess.Popen([
         'docker', 'run', '--rm', '--network', 'host',
         '-v', os.path.abspath(os.path.dirname(__file__)) + ':/app',
@@ -170,14 +182,50 @@ if __name__ == '__main__':
         os.makedirs(runtime_capture_dir, exist_ok=True)
         os.chmod(runtime_capture_dir, 0o777)
 
-        # PacketCapturer 시작
-        capturer = PacketCapturer(
-            capture_points=capture_points,
-            output_dir=runtime_capture_dir,
-            log_dir=os.path.join(runtime_capture_dir, 'logs'),
-        )
-        capturer.start()
-        print('[*] 패킷 캡처 시작 (임시 저장 위치: %s)' % runtime_capture_dir)
+        if args.capture_mode == 'tshark':
+            # PacketCapturer 시작
+            capturer = PacketCapturer(
+                capture_points=capture_points,
+                output_dir=runtime_capture_dir,
+                log_dir=os.path.join(runtime_capture_dir, 'logs'),
+            )
+            capturer.start()
+            print('[*] tshark 패킷 캡처 시작 (임시 저장 위치: %s)' % runtime_capture_dir)
+        elif args.capture_mode == 'xdp':
+            # XDP는 ingress hook이므로 OVS switch port가 아니라 각 host namespace의 h*-eth0에 붙인다.
+            xdp_capture_points = [
+                CapturePoint(
+                    node=host,
+                    interface='%s-eth0' % host.name,
+                    output_name=host.name,
+                )
+                for host in network.hosts
+            ]
+            capturer = NodeXdpPacketCapturer(
+                capture_points=xdp_capture_points,
+                log_dir=os.path.join(runtime_capture_dir, 'logs'),
+                xdp_mode=args.xdp_mode,
+                feature_packet_count=args.feature_packet_count,
+                server_port=DST_PORT,
+                k=k,
+                run_id=run_id,
+                redis_url=args.redis_url,
+                redis_stream=args.redis_stream,
+                redis_stream_maxlen=args.redis_stream_maxlen,
+                publish_direction=args.publish_direction,
+            )
+            capturer.start()
+            print('[*] XDP 패킷 캡처 시작 (mode=%s, host 인터페이스 %d개)' % (
+                args.xdp_mode,
+                len(xdp_capture_points),
+            ))
+            if args.redis_url is not None:
+                print('[*] Redis Stream 전송 활성화 (stream=%s, direction=%s)' % (
+                    args.redis_stream,
+                    args.publish_direction,
+                ))
+        else:
+            print('[*] 패킷 캡처 비활성화 (--capture-mode none)')
 
         # 트래픽 생성 (pod0,1=src → pod2,3=dst)
         print('[*] 트래픽 생성 시작...')
@@ -193,10 +241,11 @@ if __name__ == '__main__':
 
         time.sleep(1)
 
-        capturer.stop()
-        print('[*] 패킷 캡처 중단')
+        if capturer is not None:
+            capturer.stop()
+            print('[*] 패킷 캡처 중단')
 
-        # 실험 중 생성된 pcap을 run별 디렉터리에 복사한다.
+        # 실험 중 생성된 pcap 또는 XDP 로그를 run별 디렉터리에 복사한다.
         shutil.copytree(runtime_capture_dir, capture_dir, dirs_exist_ok=True)
         make_tree_readable(run_dir)
         print('[*] 패킷 캡처 파일 복사 완료 (%s)' % capture_dir)
@@ -220,6 +269,14 @@ if __name__ == '__main__':
                 print('[!] %s 없음 - 결과를 분석할 수 없습니다.' % flows_file)
 
     finally:
+        if capturer is not None:
+            try:
+                capturer.stop()
+            except Exception as exc:
+                print('[!] 패킷 캡처 정리 중 오류: %s' % exc)
+        if os.path.exists(runtime_capture_dir):
+            shutil.copytree(runtime_capture_dir, capture_dir, dirs_exist_ok=True)
+            make_tree_readable(run_dir)
         # 정리
         print('[*] 네트워크 종료 중...')
         if network is not None:
