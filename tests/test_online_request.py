@@ -1,7 +1,7 @@
 import unittest
 
-from feature_pipeline.online_request import build_online_flow_request
-from feature_pipeline.models import FlowEntry, PacketRecord
+from pipeline.realtime.online_request import build_online_flow_request
+from pipeline.models import FlowEntry, PacketRecord
 
 
 def packet(frame_number: int, ts_us: int, tcp_len: int) -> PacketRecord:
@@ -70,6 +70,54 @@ class OnlineRequestTest(unittest.TestCase):
         self.assertEqual(request["x"][0][15], 0)
         self.assertEqual(request["x"][0][17], 1448)
         self.assertEqual(request["run_id"], "unit")
+        self.assertEqual(request["producer_metrics"]["capture_mode"], None)
+        self.assertEqual(request["producer_metrics"]["first_packet_ts_us"], 1_010)
+        self.assertEqual(request["producer_metrics"]["last_packet_ts_us"], 1_010)
+        self.assertEqual(request["producer_metrics"]["feature_packet_count_observed"], 1)
+        self.assertIsInstance(request["producer_metrics"]["feature_ready_wall_ns"], int)
+
+    def test_build_online_flow_request_accepts_latency_metadata(self):
+        entry = FlowEntry(
+            src_index=0,
+            flow_id=7,
+            direction="dst_to_src",
+            logical_flow_id="0:7:dst_to_src",
+        )
+        entry.packets.append(packet(frame_number=1, ts_us=1_000, tcp_len=1448))
+        entry.payload_bytes = 1448
+
+        request = build_online_flow_request(
+            entry,
+            packet_count=3,
+            run_id="unit",
+            capture_mode="xdp",
+            feature_ready_wall_ns=123,
+        )
+
+        self.assertEqual(request["producer_metrics"]["capture_mode"], "xdp")
+        self.assertEqual(request["producer_metrics"]["feature_ready_wall_ns"], 123)
+
+    def test_build_online_flow_request_prefers_packet_epoch_timestamp(self):
+        entry = FlowEntry(
+            src_index=0,
+            flow_id=7,
+            direction="dst_to_src",
+            logical_flow_id="0:7:dst_to_src",
+        )
+        pkt = packet(frame_number=1, ts_us=1_000, tcp_len=1448)
+        pkt.epoch_ts_us = 1_700_000_000_000_000
+        entry.packets.append(pkt)
+
+        request = build_online_flow_request(entry, packet_count=3)
+
+        self.assertEqual(
+            request["producer_metrics"]["first_packet_ts_us"],
+            1_700_000_000_000_000,
+        )
+        self.assertEqual(
+            request["producer_metrics"]["last_packet_ts_us"],
+            1_700_000_000_000_000,
+        )
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 import struct
 import unittest
 
-from feature_pipeline.online_tg_flow_cache import (
+from pipeline.realtime.online_tg_flow_cache import (
     TG_FLOW_DIR_DST_TO_SRC,
     TG_FLOW_DIR_SRC_TO_DST,
     TrafficGeneratorOnlineFlowCache,
@@ -32,6 +32,7 @@ def event(
 
     return XdpPacketEvent(
         ts_us=ts_us,
+        epoch_ts_us=None,
         frame_number=frame_number,
         ifname="edge_p0_e0-eth1",
         src_ip=src_ip,
@@ -119,6 +120,8 @@ class TrafficGeneratorOnlineFlowCacheTest(unittest.TestCase):
 
         self.assertEqual([pkt.frame_number for pkt in first.packets], [1, 2])
         self.assertEqual([pkt.frame_number for pkt in second.packets], [3])
+        self.assertEqual(first.status, "default")
+        self.assertEqual(second.status, "default")
         self.assertTrue(cache.flow_cache.is_ready(first))
         self.assertFalse(cache.flow_cache.is_ready(second))
 
@@ -144,7 +147,74 @@ class TrafficGeneratorOnlineFlowCacheTest(unittest.TestCase):
         entry = cache.flow_cache.entries[(0, 3, "src_to_dst")]
         self.assertEqual(entry.logical_flow_id, "0:3:src_to_dst")
         self.assertEqual(entry.payload_bytes, 20)
+        self.assertEqual(entry.status, "default")
         self.assertTrue(cache.flow_cache.is_ready(entry))
+
+    def test_ready_flow_transitions_to_pending(self):
+        cache = TrafficGeneratorOnlineFlowCache(
+            feature_packet_count=1,
+            src_index_by_ip={"10.0.0.1": 0},
+        )
+
+        cache.process_event(
+            event(
+                ts_us=1_000,
+                frame_number=1,
+                src_ip="10.2.0.1",
+                dst_ip="10.0.0.1",
+                src_port=5001,
+                dst_port=40000,
+                tcp_len=120,
+                payload_prefix=tg_meta(1, 200, 1, 80, TG_FLOW_DIR_DST_TO_SRC),
+            )
+        )
+
+        entry = cache.flow_cache.entries[(0, 1, "dst_to_src")]
+        self.assertEqual(entry.status, "default")
+        self.assertTrue(cache.flow_cache.is_ready(entry))
+
+        cache.mark_pending(entry)
+
+        self.assertEqual(entry.status, "pending")
+        self.assertFalse(cache.flow_cache.is_ready(entry))
+
+    def test_pending_flow_does_not_collect_more_packets(self):
+        cache = TrafficGeneratorOnlineFlowCache(
+            feature_packet_count=1,
+            src_index_by_ip={"10.0.0.1": 0},
+        )
+
+        cache.process_event(
+            event(
+                ts_us=1_000,
+                frame_number=1,
+                src_ip="10.2.0.1",
+                dst_ip="10.0.0.1",
+                src_port=5001,
+                dst_port=40000,
+                tcp_len=120,
+                payload_prefix=tg_meta(1, 300, 1, 80, TG_FLOW_DIR_DST_TO_SRC),
+                seq=100,
+            )
+        )
+        entry = cache.flow_cache.entries[(0, 1, "dst_to_src")]
+        cache.mark_pending(entry)
+
+        cache.process_event(
+            event(
+                ts_us=1_010,
+                frame_number=2,
+                src_ip="10.2.0.1",
+                dst_ip="10.0.0.1",
+                src_port=5001,
+                dst_port=40000,
+                tcp_len=120,
+                seq=220,
+            )
+        )
+
+        self.assertEqual([pkt.frame_number for pkt in entry.packets], [1])
+        self.assertEqual(entry.payload_bytes, 120)
 
     def test_ack_only_packet_is_skipped_in_active_flow(self):
         cache = TrafficGeneratorOnlineFlowCache(

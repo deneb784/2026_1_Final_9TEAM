@@ -13,14 +13,14 @@ from bcc import BPF
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from feature_pipeline.online_tg_flow_cache import (
+from pipeline.realtime.online_tg_flow_cache import (
     parse_tg_metadata,
     TrafficGeneratorOnlineFlowCache,
     XdpPacketEvent,
     build_default_src_index_by_ip,
 )
-from feature_pipeline.online_request import build_online_flow_request
-from feature_pipeline.redis_transport import RedisStreamProducer
+from pipeline.realtime.online_request import build_online_flow_request
+from pipeline.redis.transport import RedisStreamProducer
 
 
 MAX_PAYLOAD_PREFIX = 32
@@ -214,13 +214,16 @@ def make_event(
     raw: BpfPacketEvent,
     frame_number: int,
     ifname_by_index: dict[int, str],
+    monotonic_to_epoch_offset_ns: int,
 ) -> XdpPacketEvent:
     """커널 perf event 구조체를 Python 파이프라인이 쓰는 XdpPacketEvent로 바꾼다."""
     prefix_len = int(raw.payload_prefix_len)
     payload_prefix = bytes(raw.payload_prefix[:prefix_len])
     ifname = ifname_by_index.get(int(raw.ifindex), f"ifindex-{int(raw.ifindex)}")
+    epoch_ts_ns = int(raw.ts_ns) + monotonic_to_epoch_offset_ns
     return XdpPacketEvent(
         ts_us=int(raw.ts_ns // 1000),
+        epoch_ts_us=int(epoch_ts_ns // 1000),
         frame_number=frame_number,
         ifname=ifname,
         src_ip=ip_to_str(raw.saddr),
@@ -281,6 +284,9 @@ def main() -> int:
         src_index_by_ip=src_index_by_ip,
         server_port=args.server_port,
     )
+    # bpf_ktime_get_ns()는 monotonic 계열 timestamp다. Redis/분석은 epoch wall-clock을
+    # 쓰므로 user-space에서 측정한 offset으로 packet epoch timestamp를 함께 기록한다.
+    monotonic_to_epoch_offset_ns = time.time_ns() - time.monotonic_ns()
 
     bpf = BPF(text=BPF_PROGRAM)
     fn = bpf.load_func("xdp_tg_capture", BPF.XDP)
@@ -319,7 +325,12 @@ def main() -> int:
         frame_number += 1
         stats["events"] += 1
         raw = ct.cast(data, ct.POINTER(BpfPacketEvent)).contents
-        event = make_event(raw, frame_number=frame_number, ifname_by_index=ifname_by_index)
+        event = make_event(
+            raw,
+            frame_number=frame_number,
+            ifname_by_index=ifname_by_index,
+            monotonic_to_epoch_offset_ns=monotonic_to_epoch_offset_ns,
+        )
         if event.dst_port == args.server_port:
             direction_counts["src_to_dst"] += 1
         elif event.src_port == args.server_port:
@@ -362,6 +373,8 @@ def main() -> int:
                         entry,
                         packet_count=args.feature_packet_count,
                         run_id=args.run_id,
+                        capture_mode="xdp",
+                        feature_ready_wall_ns=time.time_ns(),
                     )
                     stream_id = stream_producer.publish(request)
                     stats["published"] += 1
@@ -381,7 +394,7 @@ def main() -> int:
                     print(f"[redis] stream publish failed: {exc}", file=sys.stderr)
                     return
 
-            online_cache.mark_feature_sent(entry)
+            online_cache.mark_pending(entry)
 
     for ifname in interfaces:
         bpf.attach_xdp(ifname, fn, flags)

@@ -3,10 +3,17 @@ import shutil
 import sys, os, time, subprocess
 from mininet.log import setLogLevel
 
-from topoBuilder import fatTreeBuilder
-from flowGenerator import flowGenerator
-from packet_captuer import CapturePoint, CombinedPacketCapturer, PacketCapturer, NodeXdpPacketCapturer
+from network.packet_capture import (
+    CapturePoint,
+    CombinedPacketCapturer,
+    NodeXdpPacketCapturer,
+    PacketCapturer,
+)
+from network.topology import fatTreeBuilder
+from network.traffic_generator import flowGenerator
 # from analyze.ecmp_verification import run_ecmp_verification
+
+PROJECT_ROOT = os.path.abspath(os.path.dirname(__file__))
 
 """
 실행 방법:
@@ -68,7 +75,8 @@ def make_tree_readable(path):
         for filename in files:
             os.chmod(os.path.join(root, filename), 0o644)
 
-if __name__ == '__main__':
+def main():
+    os.chdir(PROJECT_ROOT)
 
     parser = argparse.ArgumentParser()
     parser.add_argument('flowsPerPair', type=int)
@@ -76,7 +84,7 @@ if __name__ == '__main__':
     parser.add_argument('--output-root', default='runs')
     parser.add_argument('--load-mbps', type=int, default=80)
     parser.add_argument('--seed-base', type=int, default=1000)
-    parser.add_argument('--cdf-file', default='FB_CDF.txt')
+    parser.add_argument('--cdf-file', default='DCTCP_CDF.txt')
     parser.add_argument('--capture-mode', choices=['tshark', 'xdp', 'xdp-verify', 'none'], default='tshark')
     parser.add_argument('--xdp-mode', choices=['skb', 'native', 'hw'], default='skb')
     parser.add_argument('--feature-packet-count', type=int, default=10)
@@ -113,9 +121,9 @@ if __name__ == '__main__':
     capturer = None
     ryu_proc = subprocess.Popen([
         'docker', 'run', '--rm', '--network', 'host',
-        '-v', os.path.abspath(os.path.dirname(__file__)) + ':/app',
+        '-v', PROJECT_ROOT + ':/app',
         'ryu-py3',
-        'ryu-manager', '/app/main_controller.py'
+        'ryu-manager', '/app/network/controller.py'
     ])
     time.sleep(3)  # Ryu가 준비될 때까지 대기
 
@@ -306,3 +314,7 @@ if __name__ == '__main__':
         ryu_proc.terminate()
         os.system('mn -c')
         os.system('pkill -KILL tshark')
+
+
+if __name__ == '__main__':
+    main()

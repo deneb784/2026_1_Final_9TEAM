@@ -16,4 +16,6 @@ model/model_train_test/
 *.pdf
 *.tgz
 *.jsonl
+dataset_univ1d.tar.gz
+redis_latency_validation_notion.md
 

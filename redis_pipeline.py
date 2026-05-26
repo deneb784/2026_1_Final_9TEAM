@@ -1,25 +1,24 @@
 import asyncio
-from pathlib import Path
-from feature_pipeline.pipeline import run_pipeline, build_flow_request, serialize_flow_request, find_pcap_files
-from feature_pipeline.meta_loader import load_all_request_meta, build_meta_index
-from feature_pipeline.packet_loader import iter_packets_from_pcap
-from feature_pipeline.matcher import match_packet
-from feature_pipeline.flow_cache import FlowCache
-from feature_pipeline.feature_extractor import compute_features
-from redis.redis_producer import RedisProducer
+from pipeline.dataset.pipeline import build_flow_request, find_pcap_files, serialize_flow_request
+from pipeline.dataset.meta_loader import load_all_request_meta, build_meta_index
+from pipeline.dataset.packet_loader import iter_packets_from_pcap
+from pipeline.dataset.matcher import match_packet
+from pipeline.flow_cache import FlowCache
+from pipeline.dataset.feature_extractor import build_packet_features
+from pipeline.redis.transport import RedisStreamProducer
 
 async def run_pipeline_with_redis(
     results_dir: str = "results",
     pcap_dir: str = "captured_packet",
-    feature_packet_count: int = 8,
+    feature_packet_count: int = 10,
     redis_host: str = "localhost",
     redis_port: int = 6379,
     redis_queue: str = "flow_features",
 ) -> list[str]:
     """Redis 연동된 비동기 파이프라인을 실행합니다."""
-    # Redis producer 초기화
-    redis_producer = RedisProducer(host=redis_host, port=redis_port, queue_name=redis_queue)
-    await redis_producer.connect()
+    redis_url = "redis://%s:%s/0" % (redis_host, redis_port)
+    redis_producer = RedisStreamProducer(redis_url=redis_url, stream_name=redis_queue)
+    redis_producer.connect()
 
     try:
         # 기존 pipeline 로직 재사용
@@ -42,12 +41,12 @@ async def run_pipeline_with_redis(
                 entry = flow_cache.add_packet(meta, direction, packet)
 
                 if flow_cache.is_ready(entry):
-                    features = compute_features(entry)
+                    features = build_packet_features(entry)
                     flow_request = build_flow_request(meta, entry, features)
                     flow_request_json = serialize_flow_request(flow_request)
 
                     # Redis로 전송
-                    await redis_producer.publish(flow_request_json)
+                    redis_producer.publish(flow_request)
                     published_payloads.append(flow_request_json)
 
                     # 중복 전송 방지
@@ -56,13 +55,13 @@ async def run_pipeline_with_redis(
         return published_payloads
 
     finally:
-        await redis_producer.close()
+        redis_producer.close()
 
 
 def run_pipeline_sync_with_redis(
     results_dir: str = "results",
     pcap_dir: str = "captured_packet",
-    feature_packet_count: int = 8,
+    feature_packet_count: int = 10,
     redis_host: str = "localhost",
     redis_port: int = 6379,
     redis_queue: str = "flow_features",
@@ -82,7 +81,6 @@ if __name__ == "__main__":
     payloads = run_pipeline_sync_with_redis(
         results_dir="results",
         pcap_dir="captured_packet",
-        feature_packet_count=8,
+        feature_packet_count=10,
     )
-    print(f"Published {len(payloads)} flow requests to Redis queue")
     print(f"Published {len(payloads)} flow requests to Redis queue")
