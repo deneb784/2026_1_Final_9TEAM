@@ -891,9 +891,9 @@ python3 analyze/redis_stream_latency.py \
 - `ready_to_xadd_done`가 기존 XDP 결과와 비슷한 sub-ms 수준인지 확인
 - tshark 결과와 `last_packet_to_xadd_done` p95/p99 비교
 
-## 21. tshark 조건 정렬: 방향 필터와 서버쪽 캡처 지점
+## 21. tshark 조건 정렬: host ingress와 client dst_to_src
 
-live-traffic 브랜치의 기존 tshark realtime 경로를 확인한 결과, 캡처 조건이 XDP 비교에 불리하게 넓었다.
+live-traffic 브랜치의 기존 tshark realtime 경로를 확인한 결과, 캡처 조건이 XDP 비교와 달랐다.
 
 - 캡처 지점: 모든 edge host-facing 인터페이스 16개
 - BPF filter: 각 지점에서 `tcp and src host <host_ip>`
@@ -901,31 +901,38 @@ live-traffic 브랜치의 기존 tshark realtime 경로를 확인한 결과, 캡
 
 현재 XDP 비교의 기본 publish 방향은 `dst_to_src`다. 따라서 tshark가 `src_to_dst`까지 함께 처리하면, 실제 비교 대상이 아닌 request 방향 패킷까지 tshark dissection/텍스트 직렬화/파싱/큐 비용에 포함되어 `last_packet_to_xadd_done`가 더 커질 수 있다.
 
-이를 분리해서 검증하기 위해 `/tmp/capstone-live-traffic`에 다음 옵션을 추가했다.
+이후 비교 조건을 더 맞추기 위해 `feat/live-traffic-validation` 브랜치에 다음 옵션을 추가했다. 해당 worktree는 `/home/leesungwon/capstone-live-traffic-rebuild`에 있다.
 
 ```text
 --publish-direction {dst_to_src,src_to_dst,all}
   Redis Stream으로 publish할 ready flow 방향을 제한한다.
   XDP 비교 기본 조건은 dst_to_src.
 
---capture-scope {all-hosts,server-dst-to-src}
-  all-hosts: 기존처럼 모든 host-facing edge 포트를 캡처한다.
-  server-dst-to-src: TrafficGenerator 목적지 pod인 pod2/3의 host-facing edge 포트만 캡처한다.
+--capture-location {edge-host-facing,host-ingress}
+  edge-host-facing: 기존처럼 edge switch의 host-facing port에서 tshark를 실행한다.
+  host-ingress: XDP와 맞춰 Mininet host namespace의 h*-eth0에서 tshark를 실행한다.
+
+--capture-scope {all-hosts,server-dst-to-src,client-dst-to-src}
+  all-hosts: 전체 host를 대상으로 캡처한다.
+  client-dst-to-src: pod0/1 client host ingress에서 dst_to_src 응답 방향만 캡처한다.
 ```
 
-`server-dst-to-src`는 캡처 지점을 서버쪽으로 줄이고, 기존 `src host <server_ip>` BPF filter를 그대로 사용한다. TrafficGenerator 구조에서 서버 응답은 `src_port == 5001`이고 realtime flow table에서는 이를 `dst_to_src`로 판정한다. 즉 tshark 프로세스가 애초에 처리하는 입력량을 서버 응답 방향 중심으로 줄이는 조건이다.
+최신 비교에서 사용한 조건은 `server-dst-to-src`가 아니라 `host-ingress + client-dst-to-src`다.
+
+이 조건은 client host의 `h*-eth0` ingress에서 `tcp and dst host <client_ip>` 필터로 서버 응답이 client로 들어오는 방향만 본다. XDP도 host namespace의 ingress에서 패킷을 보기 때문에, 기존 edge switch host-facing 캡처보다 XDP와 물리적 위치가 더 가깝다.
 
 다음 비교 실행 명령:
 
 ```bash
-cd /tmp/capstone-live-traffic
+cd /home/leesungwon/capstone-live-traffic-rebuild
 
 redis-cli -s /tmp/capstone-redis.sock DEL flow_features flow_features:latency
 
 sudo python3 main.py 100 \
-  --run-id tshark_server_dst_uds_100_dctcp_e2e \
+  --run-id tshark_host_ingress_client_dst_uds_100_dctcp_e2e \
   --realtime \
-  --capture-scope server-dst-to-src \
+  --capture-location host-ingress \
+  --capture-scope client-dst-to-src \
   --publish-direction dst_to_src \
   --redis-url 'unix:///tmp/capstone-redis.sock?db=0' \
   --redis-stream flow_features
@@ -937,10 +944,33 @@ sudo python3 main.py 100 \
 python3 analyze/redis_stream_latency.py \
   --redis-url 'unix:///tmp/capstone-redis.sock?db=0' \
   --stream flow_features \
-  --run-id tshark_server_dst_uds_100_dctcp_e2e \
+  --run-id tshark_host_ingress_client_dst_uds_100_dctcp_e2e \
   --capture-mode tshark
 ```
 
-이 결과를 기존 `tshark_uds_100_dctcp_e2e`와 비교하면 “양방향/all-host 캡처 때문에 증가한 tshark overhead”를 분리해 볼 수 있다. 그래도 `last_packet_to_xadd_done`가 XDP보다 충분히 크다면, 주된 병목은 방향 수 자체보다 tshark의 dissection/stdout text/Python parsing/queue 경로라고 더 강하게 말할 수 있다.
+실행 결과:
 
-주의: 이것은 tshark를 XDP와 더 공정하게 맞춘 비교 조건이지만, 완전히 동일한 물리적 캡처 조건은 아니다. 현재 XDP는 host namespace의 인터페이스들에서 캡처하고 publish 방향을 `dst_to_src`로 제한한다. tshark `server-dst-to-src`는 캡처 입력 자체를 서버쪽으로 줄인 조건이다. 따라서 보고서에는 “기존 tshark all-host 결과”와 “서버쪽 dst_to_src 제한 tshark 결과”를 둘 다 제시하는 것이 좋다.
+```text
+stream=flow_features samples=669 run_id=tshark_host_ingress_client_dst_uds_100_dctcp_e2e capture_mode=tshark
+ready_to_xadd_done        count=   669 min=0.097 p50=0.176 p95=0.368 p99=0.708 max=9.876 mean=0.219 ms
+xadd_duration             count=   669 min=0.094 p50=0.172 p95=0.364 p99=0.704 max=9.873 mean=0.216 ms
+first_packet_to_xadd_done count=   669 min=61.499 p50=189.712 p95=404.235 p99=502.865 max=943.487 mean=213.524 ms
+last_packet_to_xadd_done  count=   669 min=58.319 p50=183.287 p95=387.920 p99=467.185 max=511.029 mean=202.892 ms
+```
+
+기존 XDP 결과와 비교:
+
+```text
+XDP last_packet_to_xadd_done p99    = 1.228 ms
+tshark host-ingress p99             = 467.185 ms
+비율                               = 467.185 / 1.228 = 약 380.4배
+```
+
+최신 해석:
+
+- `ready_to_xadd_done`와 `xadd_duration`는 tshark host-ingress 조건에서도 sub-ms에 가깝다.
+- Redis `XADD` 자체가 병목은 아니다.
+- 하지만 `last_packet_to_xadd_done`는 p99 기준 약 467 ms로 여전히 크다.
+- 따라서 마지막 feature packet이 관측된 뒤 tshark stdout/field extraction/Python parsing/queue/flow 처리 경로에서 backlog가 생기는 것으로 해석할 수 있다.
+
+보고서에는 기존 `server-dst-to-src` 조건이 아니라, 최신 `host-ingress + client-dst-to-src + publish dst_to_src` 결과를 중심으로 제시하는 것이 맞다. 단, 이것도 완전히 동일한 내부 구현에서 capture backend만 바꾼 microbenchmark는 아니므로 “동일 traffic, Redis UDS, publish 방향 조건에서 online capture pipeline의 end-to-end request emission latency를 비교한 결과”라고 표현해야 한다.
