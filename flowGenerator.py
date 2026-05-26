@@ -11,7 +11,7 @@ def flowGenerator(
     port,
     flowsPerPair,
     results_dir="results",
-    cdf_file="UNI1_CDF.txt",
+    cdf_file="FB_CDF.txt",
     load_mbps=80,
     seed_base=1,
 ):

@@ -208,12 +208,14 @@ src_index + flow_id + direction
 `main.py`에 다음 옵션을 추가했다.
 
 ```text
---capture-mode {tshark,xdp,none}
+--capture-mode {tshark,xdp,xdp-verify,none}
 --xdp-mode {skb,native,hw}
 --feature-packet-count N
 ```
 
 기본값은 기존 호환을 위해 `tshark`다.
+
+외부 기준 유실 검증을 위해 `--capture-mode xdp-verify`도 추가했다. 이 모드는 각 Mininet host namespace의 `h*-eth0`에서 XDP와 `tshark`를 동시에 실행한다. XDP는 ingress hook만 보므로, 검증용 `tshark`는 같은 host interface에서 `tcp and dst host <host_ip>` 필터로 ingress TCP만 pcap에 저장한다.
 
 XDP smoke 실행 예시:
 
@@ -225,6 +227,13 @@ sudo python3 main.py 1 --run-id xdp_smoke --capture-mode xdp --feature-packet-co
 
 ```bash
 sudo python3 main.py 100 --run-id xdp_loss_seq10 --capture-mode xdp --feature-packet-count 10
+```
+
+XDP와 tshark 동시 검증 실행 예시:
+
+```bash
+sudo python3 main.py 100 --run-id xdp_verify_seq10 --capture-mode xdp-verify --feature-packet-count 10
+python3 analyze/verify_xdp_tshark_capture.py runs/mininet_xdp_verify_seq10
 ```
 
 로그 확인 명령:
@@ -422,6 +431,6 @@ sudo python3 main.py 100 \
 1. Redis 서버를 띄운 뒤 Stream 적재/worker 소비/PubSub 응답 end-to-end 확인
 2. client/controller 쪽 Pub/Sub subscriber를 flow state 갱신 로직에 연결
 3. worker consumer group pending message 재처리 정책 정리
-4. tshark 동시 캡처와 XDP 캡처를 비교해 외부 기준의 유실 검증 추가하기
+4. `xdp-verify` 모드로 tshark 동시 캡처와 XDP 캡처를 비교해 외부 기준의 유실 검증 실행하기
 
 현재까지의 결과는 “XDP로 online FlowCache 입력을 만들 수 있다”는 단계까지 도달한 상태다. 다음 작업부터는 이 ready entry를 모델 추론 파이프라인에 연결하면 된다.

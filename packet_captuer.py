@@ -90,6 +90,28 @@ class PacketCapturer:
                 stderr_target.close()
 
 
+class CombinedPacketCapturer:
+    """여러 capturer를 하나처럼 시작/종료하기 위한 얇은 wrapper."""
+
+    def __init__(self, capturers: list[object]):
+        self.capturers = capturers
+        self._started: list[object] = []
+
+    def start(self) -> None:
+        try:
+            for capturer in self.capturers:
+                capturer.start()
+                self._started.append(capturer)
+        except Exception:
+            self.stop()
+            raise
+
+    def stop(self) -> None:
+        for capturer in reversed(self._started):
+            capturer.stop()
+        self._started.clear()
+
+
 class XdpPacketCapturer:
     """여러 인터페이스에 XDP 캡처 프로그램을 붙여 온라인 FlowCache까지 전달한다."""
 

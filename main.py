@@ -5,7 +5,7 @@ from mininet.log import setLogLevel
 
 from topoBuilder import fatTreeBuilder
 from flowGenerator import flowGenerator
-from packet_captuer import CapturePoint, PacketCapturer, NodeXdpPacketCapturer
+from packet_captuer import CapturePoint, CombinedPacketCapturer, PacketCapturer, NodeXdpPacketCapturer
 # from analyze.ecmp_verification import run_ecmp_verification
 
 """
@@ -76,8 +76,8 @@ if __name__ == '__main__':
     parser.add_argument('--output-root', default='runs')
     parser.add_argument('--load-mbps', type=int, default=80)
     parser.add_argument('--seed-base', type=int, default=1000)
-    parser.add_argument('--cdf-file', default='UNI1_CDF.txt')
-    parser.add_argument('--capture-mode', choices=['tshark', 'xdp', 'none'], default='tshark')
+    parser.add_argument('--cdf-file', default='FB_CDF.txt')
+    parser.add_argument('--capture-mode', choices=['tshark', 'xdp', 'xdp-verify', 'none'], default='tshark')
     parser.add_argument('--xdp-mode', choices=['skb', 'native', 'hw'], default='skb')
     parser.add_argument('--feature-packet-count', type=int, default=10)
     parser.add_argument('--redis-url', default=None)
@@ -191,7 +191,7 @@ if __name__ == '__main__':
             )
             capturer.start()
             print('[*] tshark 패킷 캡처 시작 (임시 저장 위치: %s)' % runtime_capture_dir)
-        elif args.capture_mode == 'xdp':
+        elif args.capture_mode in ('xdp', 'xdp-verify'):
             # XDP는 ingress hook이므로 OVS switch port가 아니라 각 host namespace의 h*-eth0에 붙인다.
             xdp_capture_points = [
                 CapturePoint(
@@ -214,11 +214,33 @@ if __name__ == '__main__':
                 redis_stream_maxlen=args.redis_stream_maxlen,
                 publish_direction=args.publish_direction,
             )
+            if args.capture_mode == 'xdp-verify':
+                tshark_capture_points = [
+                    CapturePoint(
+                        node=host,
+                        interface='%s-eth0' % host.name,
+                        capture_filter='tcp and dst host %s' % host.IP(),
+                        output_name='%s.ingress' % host.name,
+                    )
+                    for host in network.hosts
+                ]
+                tshark_capturer = PacketCapturer(
+                    capture_points=tshark_capture_points,
+                    output_dir=runtime_capture_dir,
+                    log_dir=os.path.join(runtime_capture_dir, 'logs'),
+                )
+                capturer = CombinedPacketCapturer([tshark_capturer, capturer])
             capturer.start()
-            print('[*] XDP 패킷 캡처 시작 (mode=%s, host 인터페이스 %d개)' % (
-                args.xdp_mode,
-                len(xdp_capture_points),
-            ))
+            if args.capture_mode == 'xdp-verify':
+                print('[*] XDP+tshark 검증 캡처 시작 (mode=%s, host 인터페이스 %d개)' % (
+                    args.xdp_mode,
+                    len(xdp_capture_points),
+                ))
+            else:
+                print('[*] XDP 패킷 캡처 시작 (mode=%s, host 인터페이스 %d개)' % (
+                    args.xdp_mode,
+                    len(xdp_capture_points),
+                ))
             if args.redis_url is not None:
                 print('[*] Redis Stream 전송 활성화 (stream=%s, direction=%s)' % (
                     args.redis_stream,
