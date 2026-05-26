@@ -150,7 +150,7 @@ def build_x_from_entry(
     raw_sequences: bool = False,
 ) -> tuple[list[list], int | None]:
     """단방향 FlowEntry에서 모델 입력 x를 만든다."""
-    packets = entry.packets[:packet_count]
+    packets = [pkt for pkt in entry.packets if pkt.tcp_len > 0][:packet_count]
     x: list[list] = []
     prev_ts_us = None
     first_ts_us = None
@@ -179,7 +179,11 @@ def build_x_from_directional_packets(
     raw_sequences: bool = False,
 ) -> tuple[list[list], int | None]:
     """양방향 패킷을 시간순으로 섞어 request 단위 입력 x를 만든다."""
-    packets = sorted(directional_packets, key=lambda item: item[1].ts_us)[:packet_count]
+    packets = [
+        item
+        for item in sorted(directional_packets, key=lambda item: item[1].ts_us)
+        if item[1].tcp_len > 0
+    ][:packet_count]
     x: list[list] = []
     prev_ts_us = None
     first_ts_us = None
@@ -349,6 +353,8 @@ def run_dataset_builder(
             parent_key = (meta.src_index, meta.flow_id)
 
             if direction_filter is not None and direction != direction_filter:
+                continue
+            if packet.tcp_len <= 0:
                 continue
 
             if sample_mode == "request":

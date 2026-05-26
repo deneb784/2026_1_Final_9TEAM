@@ -343,14 +343,16 @@ def main() -> int:
         if entry is not None and online_cache.flow_cache.is_ready(entry):
             stats["ready"] += 1
             if args.print_ready:
+                tcp_lens = [pkt.tcp_len for pkt in entry.packets]
                 print(
-                    "[ready] src_index=%s flow_id=%s direction=%s packets=%s payload_bytes=%s"
+                    "[ready] src_index=%s flow_id=%s direction=%s packets=%s payload_bytes=%s tcp_lens=%s"
                     % (
                         entry.src_index,
                         entry.flow_id,
                         entry.direction,
                         len(entry.packets),
                         entry.payload_bytes,
+                        tcp_lens,
                     )
                 )
 

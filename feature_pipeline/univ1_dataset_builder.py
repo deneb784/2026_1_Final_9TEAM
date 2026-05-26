@@ -202,7 +202,11 @@ def add_packet_to_direction(
     packet_count: int,
     mask_analysis_features: bool = True,
 ) -> None:
-    """패킷 row 하나를 특정 방향 상태에 누적하고, 초반 packet_count개 feature를 저장한다."""
+    """payload가 있는 패킷 row 하나를 특정 방향 상태에 누적하고 feature로 저장한다."""
+    tcp_len = to_int(row["tcp.len"])
+    if tcp_len <= 0:
+        return
+
     # iat_us는 해당 방향에서 직전 패킷과의 간격이다.
     iat_us = 0 if direction.prev_ts_us is None else ts_us - direction.prev_ts_us
     first_ts_us = ts_us if direction.first_ts_us is None else direction.first_ts_us
@@ -212,7 +216,7 @@ def add_packet_to_direction(
 
     direction.packet_count += 1
     # payload_bytes는 라벨링과 flow 크기 계산의 기준으로 사용한다.
-    direction.payload_bytes += to_int(row["tcp.len"])
+    direction.payload_bytes += tcp_len
     direction.first_ts_us = first_ts_us
     direction.last_ts_us = ts_us if direction.last_ts_us is None else max(direction.last_ts_us, ts_us)
 
@@ -228,7 +232,7 @@ def add_packet_to_direction(
         to_int(row["ip.ttl"]),
         to_int(row["ip.dsfield.dscp"]),
         to_int(row["ip.dsfield.ecn"]),
-        to_int(row["tcp.len"]),
+        tcp_len,
         to_int(row["tcp.hdr_len"]),
         to_int(row["tcp.flags.syn"]),
         to_int(row["tcp.flags.ack"]),

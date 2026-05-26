@@ -165,7 +165,8 @@ class TrafficGeneratorOnlineFlowCache:
 
         if state is None:
             # metadata를 아직 보지 못한 connection 중간 패킷은 flow_id를 알 수 없어 버린다.
-            # ACK-only 패킷도 이미 열린 flow state가 있을 때만 해당 flow에 붙일 수 있다.
+            return None
+        if event.tcp_len <= 0:
             return None
 
         packet = self._event_to_packet_record(event)
@@ -217,13 +218,32 @@ class TrafficGeneratorOnlineFlowCache:
         if direction == "src_to_dst":
             client_ip, client_port = event.src_ip, event.src_port
             server_ip, server_port = event.dst_ip, event.dst_port
-            # 요청 방향은 request metadata 뒤에 response ACK-only 패킷들이 이어질 수 있다.
-            # 다음 request metadata가 같은 connection state를 덮어쓸 때까지 열어둔다.
-            total_payload_bytes = TG_METADATA_SIZE + tg_meta.size_bytes
         else:
             client_ip, client_port = event.dst_ip, event.dst_port
             server_ip, server_port = event.src_ip, event.src_port
-            total_payload_bytes = TG_METADATA_SIZE + tg_meta.size_bytes
+
+        return self._start_flow_for_connection(
+            client_ip=client_ip,
+            client_port=client_port,
+            server_ip=server_ip,
+            server_port=server_port,
+            tg_meta=tg_meta,
+            direction=direction,
+            start_time_us=event.ts_us,
+        )
+
+    def _start_flow_for_connection(
+        self,
+        *,
+        client_ip: str,
+        client_port: int,
+        server_ip: str,
+        server_port: int,
+        tg_meta: TrafficGeneratorMetadata,
+        direction: str,
+        start_time_us: int,
+    ) -> _DirectionalFlowState:
+        total_payload_bytes = TG_METADATA_SIZE + tg_meta.size_bytes
 
         src_index = self.src_index_by_ip.get(client_ip)
         if src_index is None:
@@ -241,7 +261,7 @@ class TrafficGeneratorOnlineFlowCache:
             size_bytes=tg_meta.size_bytes,
             dscp=tg_meta.dscp,
             rate_mbps=tg_meta.rate_mbps,
-            start_time_us=event.ts_us,
+            start_time_us=start_time_us,
             stop_time_us=0,
             fct_us=0,
             src_to_dst_flow_id=f"{src_index}:{tg_meta.flow_id}:src_to_dst",

@@ -16,6 +16,31 @@ DIRECTION_TO_INDEX = {
     "bidirectional": 0,
 }
 
+LEGACY_MININET_FEATURE_NAMES = [
+    "frame_len",
+    "ip_len",
+    "ip_ttl",
+    "tcp_len",
+    "tcp_hdr_len",
+    "tcp_window_size",
+    "iat_us",
+    "retransmission",
+    "out_of_order",
+    "duplicate_ack",
+    "fast_retransmission",
+]
+
+ZERO_DEFAULT_FEATURES = {
+    "retransmission",
+    "out_of_order",
+    "duplicate_ack",
+    "fast_retransmission",
+}
+
+FEATURE_ALIASES = {
+    "tcp_len": ["tcp_len", "tcp_payload_bytes"],
+}
+
 
 class GruStreamWorker:
     """Redis Stream에서 feature 요청을 읽고 Pub/Sub으로 추론 결과를 응답한다."""
@@ -31,8 +56,8 @@ class GruStreamWorker:
         scaler_path: str,
         threshold: float = 0.5,
         tolerance: float = 0.01,
-        input_size: int = 18,
-        hidden_size: int = 64,
+        input_size: int | None = None,
+        hidden_size: int | None = None,
         device: str = "auto",
     ):
         try:
@@ -64,6 +89,71 @@ class GruStreamWorker:
             input_size=input_size,
             hidden_size=hidden_size,
         )
+        self.input_size = int(self.model.input_size)
+        if len(self.scaler.x_min) != self.input_size or len(self.scaler.x_max) != self.input_size:
+            raise ValueError(
+                "scaler feature count does not match model: "
+                f"scaler={len(self.scaler.x_min)}, model_input_size={self.input_size}"
+            )
+
+    def _project_features(self, request: dict) -> list[list[float]]:
+        rows = request["x"]
+        if not rows:
+            raise ValueError("request x must contain at least one feature row")
+
+        row_width = len(rows[0])
+        if any(len(row) != row_width for row in rows):
+            raise ValueError("request x rows must all have the same feature count")
+
+        if row_width == self.input_size:
+            return rows
+
+        feature_names = request.get("feature_names")
+        if not feature_names:
+            raise ValueError(
+                f"request has {row_width} features, but model/scaler expect {self.input_size}; "
+                "include feature_names or use a checkpoint trained with the online feature schema"
+            )
+        if len(feature_names) != row_width:
+            raise ValueError(
+                f"feature_names has {len(feature_names)} entries, but request rows have {row_width} features"
+            )
+
+        if self.input_size == len(LEGACY_MININET_FEATURE_NAMES):
+            return self._project_named_features(rows, feature_names, LEGACY_MININET_FEATURE_NAMES)
+
+        raise ValueError(
+            f"request feature schema has {row_width} columns, but model/scaler expect {self.input_size}"
+        )
+
+    def _project_named_features(
+        self,
+        rows: list[list[float]],
+        feature_names: list[str],
+        target_names: list[str],
+    ) -> list[list[float]]:
+        name_to_index = {name: index for index, name in enumerate(feature_names)}
+        selectors: list[int | None] = []
+
+        for target_name in target_names:
+            source_names = FEATURE_ALIASES.get(target_name, [target_name])
+            source_index = next(
+                (name_to_index[name] for name in source_names if name in name_to_index),
+                None,
+            )
+            if source_index is None and target_name not in ZERO_DEFAULT_FEATURES:
+                raise ValueError(
+                    f"request feature_names cannot be adapted to model schema; missing {target_name}"
+                )
+            selectors.append(source_index)
+
+        return [
+            [
+                0.0 if source_index is None else row[source_index]
+                for source_index in selectors
+            ]
+            for row in rows
+        ]
 
     def ensure_group(self) -> None:
         try:
@@ -78,7 +168,7 @@ class GruStreamWorker:
                 raise
 
     def infer(self, request: dict) -> dict:
-        x = self.scaler.transform(request["x"])
+        x = self.scaler.transform(self._project_features(request))
         direction_name = request["request_key"]["direction"]
         direction_idx = DIRECTION_TO_INDEX[direction_name]
         seq_len = int(request.get("seq_len", len(x)))
@@ -171,8 +261,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--scaler-path", default="runs/gru/mininet_pretrain/scaler.json")
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--tolerance", type=float, default=0.01)
-    parser.add_argument("--input-size", type=int, default=18)
-    parser.add_argument("--hidden-size", type=int, default=64)
+    parser.add_argument("--input-size", type=int)
+    parser.add_argument("--hidden-size", type=int)
     parser.add_argument("--device", default="auto")
     return parser.parse_args()
 

@@ -6,4 +6,4 @@ server 10.3.0.1 5001
 server 10.3.0.2 5001
 server 10.3.1.1 5001
 server 10.3.1.2 5001
-req_size_dist TrafficGenerator/conf/UNI1_CDF.txt
+req_size_dist TrafficGenerator/conf/VL2_CDF.txt

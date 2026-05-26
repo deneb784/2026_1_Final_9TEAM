@@ -160,13 +160,66 @@ def latency_summary(latencies_ms: list[float]) -> dict[str, float]:
     }
 
 
-def load_model(model_path: str | Path, device: torch.device, input_size: int, hidden_size: int) -> DiffEarlyExitGRU:
-    """checkpoint 파일에서 GRU 모델 가중치를 로드한다."""
-    model = DiffEarlyExitGRU(input_size=input_size, hidden_size=hidden_size).to(device)
-    state = torch.load(model_path, map_location=device)
-    if isinstance(state, dict) and "model_state_dict" in state:
+def _torch_load_checkpoint(model_path: str | Path, device: torch.device):
+    try:
+        return torch.load(model_path, map_location=device, weights_only=True)
+    except TypeError:
+        return torch.load(model_path, map_location=device)
+
+
+def _state_dict_from_checkpoint(checkpoint):
+    if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
         # train.py가 저장한 전체 checkpoint 형식과 state_dict 단독 저장 형식을 모두 지원한다.
-        state = state["model_state_dict"]
+        return checkpoint["model_state_dict"]
+    return checkpoint
+
+
+def _infer_model_sizes(state: dict) -> tuple[int | None, int | None]:
+    input_size = None
+    hidden_size = None
+
+    gru_weight = state.get("gru_cell.weight_ih")
+    if gru_weight is not None:
+        input_size = int(gru_weight.shape[1])
+        hidden_size = int(gru_weight.shape[0] // 3)
+
+    classifier_weight = state.get("classifier.weight")
+    if classifier_weight is not None:
+        hidden_size = int(classifier_weight.shape[1])
+
+    init_weight = state.get("init_h_layer.weight")
+    if init_weight is not None and hidden_size is not None:
+        input_size = int(init_weight.shape[1] - hidden_size)
+
+    return input_size, hidden_size
+
+
+def load_model(
+    model_path: str | Path,
+    device: torch.device,
+    input_size: int | None = None,
+    hidden_size: int | None = None,
+) -> DiffEarlyExitGRU:
+    """checkpoint 파일에서 GRU 모델 가중치를 로드한다."""
+    checkpoint = _torch_load_checkpoint(model_path, device)
+    state = _state_dict_from_checkpoint(checkpoint)
+    inferred_input_size, inferred_hidden_size = _infer_model_sizes(state)
+
+    if input_size is None:
+        input_size = inferred_input_size or 18
+    elif inferred_input_size is not None and input_size != inferred_input_size:
+        raise ValueError(
+            f"checkpoint expects input_size={inferred_input_size}, got input_size={input_size}"
+        )
+
+    if hidden_size is None:
+        hidden_size = inferred_hidden_size or 64
+    elif inferred_hidden_size is not None and hidden_size != inferred_hidden_size:
+        raise ValueError(
+            f"checkpoint expects hidden_size={inferred_hidden_size}, got hidden_size={hidden_size}"
+        )
+
+    model = DiffEarlyExitGRU(input_size=input_size, hidden_size=hidden_size).to(device)
     model.load_state_dict(state)
     model.eval()
     return model
@@ -286,8 +339,8 @@ def main() -> None:
     parser.add_argument("--size-field", default="flow_size_bytes")
     parser.add_argument("--thresholds", nargs="+", type=float, default=[0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95])
     parser.add_argument("--tolerances", nargs="+", type=float, default=[0.01])
-    parser.add_argument("--input-size", type=int, default=18)
-    parser.add_argument("--hidden-size", type=int, default=64)
+    parser.add_argument("--input-size", type=int)
+    parser.add_argument("--hidden-size", type=int)
     parser.add_argument("--latency-feature-index", type=int, default=15)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--metrics-out")
@@ -305,7 +358,7 @@ def main() -> None:
         scaler = FeatureScaler.load(args.scaler_path)
     elif args.fit_scaler_on_test:
         # 비교 실험용 옵션: test set 자체에서 scaler를 맞춘다.
-        scaler = fit_feature_scaler(raw_samples, input_size=args.input_size)
+        scaler = fit_feature_scaler(raw_samples, input_size=model.input_size)
 
     dataset = FlowJsonlDataset(
         args.test_file,

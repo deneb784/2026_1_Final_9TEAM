@@ -25,7 +25,11 @@ def event(
     tcp_len: int,
     payload_prefix: bytes = b"",
     seq: int = 1,
+    tcp_flags: int | None = None,
 ) -> XdpPacketEvent:
+    if tcp_flags is None:
+        tcp_flags = 0x18 if tcp_len else 0x10
+
     return XdpPacketEvent(
         ts_us=ts_us,
         frame_number=frame_number,
@@ -44,7 +48,7 @@ def event(
         tcp_hdr_len=20,
         tcp_seq=seq,
         tcp_ack=1,
-        tcp_flags=0x18,
+        tcp_flags=tcp_flags,
         tcp_window_size=1024,
         payload_prefix=payload_prefix,
     )
@@ -142,7 +146,7 @@ class TrafficGeneratorOnlineFlowCacheTest(unittest.TestCase):
         self.assertEqual(entry.payload_bytes, 20)
         self.assertTrue(cache.flow_cache.is_ready(entry))
 
-    def test_ack_only_packet_is_added_to_active_flow(self):
+    def test_ack_only_packet_is_skipped_in_active_flow(self):
         cache = TrafficGeneratorOnlineFlowCache(
             feature_packet_count=2,
             src_index_by_ip={"10.0.0.1": 0},
@@ -173,10 +177,57 @@ class TrafficGeneratorOnlineFlowCacheTest(unittest.TestCase):
         )
 
         entry = cache.flow_cache.entries[(0, 1, "dst_to_src")]
-        self.assertEqual([pkt.frame_number for pkt in entry.packets], [1, 2])
-        self.assertEqual([pkt.tcp_len for pkt in entry.packets], [120, 0])
+        self.assertEqual([pkt.frame_number for pkt in entry.packets], [1])
+        self.assertEqual([pkt.tcp_len for pkt in entry.packets], [120])
         self.assertEqual(entry.payload_bytes, 120)
-        self.assertTrue(cache.flow_cache.is_ready(entry))
+        self.assertFalse(cache.flow_cache.is_ready(entry))
+
+    def test_response_ack_only_before_response_metadata_is_skipped(self):
+        cache = TrafficGeneratorOnlineFlowCache(
+            feature_packet_count=2,
+            src_index_by_ip={"10.0.0.1": 0},
+        )
+
+        cache.process_event(
+            event(
+                ts_us=1_000,
+                frame_number=1,
+                src_ip="10.0.0.1",
+                dst_ip="10.2.0.1",
+                src_port=40000,
+                dst_port=5001,
+                tcp_len=20,
+                payload_prefix=tg_meta(4, 200, 1, 80, TG_FLOW_DIR_SRC_TO_DST),
+            )
+        )
+        cache.process_event(
+            event(
+                ts_us=1_010,
+                frame_number=2,
+                src_ip="10.2.0.1",
+                dst_ip="10.0.0.1",
+                src_port=5001,
+                dst_port=40000,
+                tcp_len=0,
+            )
+        )
+        cache.process_event(
+            event(
+                ts_us=1_020,
+                frame_number=3,
+                src_ip="10.2.0.1",
+                dst_ip="10.0.0.1",
+                src_port=5001,
+                dst_port=40000,
+                tcp_len=120,
+                payload_prefix=tg_meta(4, 200, 1, 80, TG_FLOW_DIR_DST_TO_SRC),
+            )
+        )
+
+        entry = cache.flow_cache.entries[(0, 4, "dst_to_src")]
+        self.assertEqual([pkt.frame_number for pkt in entry.packets], [3])
+        self.assertEqual([pkt.tcp_len for pkt in entry.packets], [120])
+        self.assertEqual(entry.payload_bytes, 120)
 
 
 if __name__ == "__main__":

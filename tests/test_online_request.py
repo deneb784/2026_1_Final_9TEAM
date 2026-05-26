@@ -62,12 +62,13 @@ class OnlineRequestTest(unittest.TestCase):
             "direction": "dst_to_src",
         })
         self.assertEqual(request["logical_flow_id"], "0:7:dst_to_src")
-        self.assertEqual(request["seq_len"], 2)
+        self.assertEqual(request["seq_len"], 1)
         self.assertEqual(len(request["x"]), 3)
         self.assertEqual(len(request["x"][0]), 18)
         self.assertEqual(request["x"][0][0], 1)
-        self.assertEqual(request["x"][1][15], 10)
-        self.assertEqual(request["x"][1][17], 1448)
+        self.assertEqual(request["x"][0][7], 1448)
+        self.assertEqual(request["x"][0][15], 0)
+        self.assertEqual(request["x"][0][17], 1448)
         self.assertEqual(request["run_id"], "unit")
 
 
