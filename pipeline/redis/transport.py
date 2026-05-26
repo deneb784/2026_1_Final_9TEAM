@@ -4,7 +4,12 @@ from typing import Any
 
 
 class RedisStreamProducer:
-    """Client -> Classifier 추론 요청을 Redis Stream에 안정적으로 적재한다."""
+    """Client -> Classifier 추론 요청을 Redis Stream에 안정적으로 적재한다.
+
+    Redis Stream은 Redis의 append-only 메시지 로그다. Pub/Sub처럼 "지금 구독 중인 사람"에게만
+    날아가는 방식이 아니라, XADD로 쌓인 entry를 consumer가 나중에 ID 기준으로 읽을 수 있다.
+    그래서 온라인 feature 요청처럼 누락되면 안 되는 작업 큐에 가깝게 사용한다.
+    """
 
     def __init__(
         self,
@@ -18,6 +23,8 @@ class RedisStreamProducer:
         self._client = None
 
     def connect(self) -> None:
+        # redis-py client는 실제 Redis 서버와 통신하는 객체다.
+        # decode_responses=True를 켜면 Redis bytes 응답을 Python str로 받아 JSON 처리와 테스트가 단순해진다.
         if self._client is not None:
             return
         try:
@@ -29,12 +36,16 @@ class RedisStreamProducer:
         self._client.ping()
 
     def publish(self, request: dict[str, Any]) -> str:
+        """요청 dict를 Redis Stream entry로 추가하고, 생성된 stream ID를 반환한다."""
         if self._client is None:
             self.connect()
         assert self._client is not None
 
         metrics = request.get("producer_metrics") or {}
         publish_start_wall_ns = time.time_ns()
+        # Redis Stream entry는 field-value 맵이다. 복잡한 dict/list는 JSON 문자열로 넣는다.
+        # payload에는 worker가 추론에 필요한 전체 request를 담고,
+        # 자주 필터링하거나 CSV로 뽑을 값은 별도 field로 한 번 더 복사한다.
         fields = {
             "request_key": json.dumps(request["request_key"], ensure_ascii=False),
             "logical_flow_id": request["logical_flow_id"],
@@ -52,14 +63,17 @@ class RedisStreamProducer:
         if metrics.get("last_packet_ts_us") is not None:
             fields["last_packet_ts_us"] = str(metrics["last_packet_ts_us"])
 
+        # maxlen을 주면 Redis가 Stream 길이를 대략적으로 제한한다.
+        # approximate=True는 정확한 trim보다 빠르지만, 지정 길이보다 조금 더 남을 수 있다.
         kwargs = {}
         if self.maxlen is not None:
             kwargs = {"maxlen": self.maxlen, "approximate": True}
 
+        # 핵심 요청 Stream. classifier worker는 이 Stream에서 새 entry를 읽고 payload를 JSON으로 복원한다.
         stream_id = self._client.xadd(self.stream_name, fields, **kwargs)
         publish_end_wall_ns = time.time_ns()
-        # XADD가 끝난 뒤 같은 entry를 보강한다. Redis Stream ID는 millisecond 정밀도라
-        # sub-ms latency 분석에는 producer wall-clock이 더 안정적이다.
+        # latency 전용 보조 Stream. 요청 본문과 분리해 두면 나중에 지연 분석만 빠르게 훑을 수 있다.
+        # Redis Stream ID는 millisecond 정밀도라 sub-ms latency 분석에는 producer wall-clock이 더 안정적이다.
         self._client.xadd(
             self.stream_name + ":latency",
             {

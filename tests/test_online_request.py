@@ -5,6 +5,8 @@ from pipeline.models import FlowEntry, PacketRecord
 
 
 def packet(frame_number: int, ts_us: int, tcp_len: int) -> PacketRecord:
+    # build_online_flow_request는 FlowEntry 안의 PacketRecord를 dataset feature로 변환한다.
+    # 테스트에서는 pcap을 읽지 않고 필요한 필드만 채운 PacketRecord를 직접 만든다.
     return PacketRecord(
         source_file="h1-eth0",
         frame_number=frame_number,
@@ -42,6 +44,8 @@ def packet(frame_number: int, ts_us: int, tcp_len: int) -> PacketRecord:
 
 class OnlineRequestTest(unittest.TestCase):
     def test_build_online_flow_request_uses_dataset_feature_shape(self):
+        # Redis Stream에 실을 request payload가 모델 worker가 기대하는 feature shape를 갖는지 확인한다.
+        # ACK-only 패킷(tcp_len=0)은 입력 feature에서 제외되고, payload 패킷만 seq_len에 반영된다.
         entry = FlowEntry(
             src_index=0,
             flow_id=7,
@@ -77,6 +81,8 @@ class OnlineRequestTest(unittest.TestCase):
         self.assertIsInstance(request["producer_metrics"]["feature_ready_wall_ns"], int)
 
     def test_build_online_flow_request_accepts_latency_metadata(self):
+        # transport.py는 producer_metrics 일부를 Stream field로 복사한다.
+        # 여기서는 capture_mode와 feature_ready_wall_ns가 request에 보존되는지 확인한다.
         entry = FlowEntry(
             src_index=0,
             flow_id=7,
@@ -98,6 +104,8 @@ class OnlineRequestTest(unittest.TestCase):
         self.assertEqual(request["producer_metrics"]["feature_ready_wall_ns"], 123)
 
     def test_build_online_flow_request_prefers_packet_epoch_timestamp(self):
+        # XDP 온라인 경로는 wall-clock epoch timestamp를 줄 수 있다.
+        # latency 계산에는 상대 ts_us보다 epoch_ts_us가 더 직접적이므로 우선 사용한다.
         entry = FlowEntry(
             src_index=0,
             flow_id=7,

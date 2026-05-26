@@ -11,6 +11,8 @@ from pipeline.realtime.online_tg_flow_cache import (
 
 
 def tg_meta(flow_id: int, size_bytes: int, tos: int, rate_mbps: int, direction: int) -> bytes:
+    # 실제 TrafficGenerator가 TCP payload 앞에 붙이는 20바이트 metadata를 테스트에서 재현한다.
+    # 이 bytes가 있어야 online_tg_flow_cache가 "새 논리 flow가 시작됐다"고 판단한다.
     return struct.pack("<IIIII", flow_id, size_bytes, tos, rate_mbps, direction)
 
 
@@ -27,6 +29,8 @@ def event(
     seq: int = 1,
     tcp_flags: int | None = None,
 ) -> XdpPacketEvent:
+    # 테스트용 XDP 이벤트 생성 헬퍼.
+    # tcp_len이 있으면 PSH+ACK(0x18), payload가 없으면 ACK-only(0x10)로 기본 플래그를 맞춘다.
     if tcp_flags is None:
         tcp_flags = 0x18 if tcp_len else 0x10
 
@@ -57,6 +61,7 @@ def event(
 
 class TrafficGeneratorOnlineFlowCacheTest(unittest.TestCase):
     def test_parse_tg_metadata(self):
+        # payload prefix에서 flow_id/크기/방향을 정확히 읽어야 이후 FlowCache key를 만들 수 있다.
         parsed = parse_tg_metadata(tg_meta(7, 1234, 5, 80, TG_FLOW_DIR_DST_TO_SRC))
 
         self.assertIsNotNone(parsed)
@@ -74,6 +79,7 @@ class TrafficGeneratorOnlineFlowCacheTest(unittest.TestCase):
         )
 
         # 같은 TCP connection에서 첫 번째 TrafficGenerator 응답 flow가 시작된다.
+        # persistent connection에서는 5-tuple이 계속 같으므로, metadata의 flow_id가 실제 request 경계다.
         cache.process_event(
             event(
                 ts_us=1_000,
@@ -101,6 +107,7 @@ class TrafficGeneratorOnlineFlowCacheTest(unittest.TestCase):
         )
 
         # 같은 5-tuple이지만 metadata의 flow_id가 바뀌면 두 번째 flow로 분리되어야 한다.
+        # 이 분리가 안 되면 서로 다른 request의 패킷이 한 모델 입력에 섞인다.
         cache.process_event(
             event(
                 ts_us=2_000,
@@ -126,6 +133,7 @@ class TrafficGeneratorOnlineFlowCacheTest(unittest.TestCase):
         self.assertFalse(cache.flow_cache.is_ready(second))
 
     def test_src_to_dst_request_metadata_creates_src_flow_entry(self):
+        # client -> server 방향 payload에 TG metadata가 있으면 src_to_dst entry가 만들어져야 한다.
         cache = TrafficGeneratorOnlineFlowCache(
             feature_packet_count=1,
             src_index_by_ip={"10.0.0.1": 0},
@@ -151,6 +159,8 @@ class TrafficGeneratorOnlineFlowCacheTest(unittest.TestCase):
         self.assertTrue(cache.flow_cache.is_ready(entry))
 
     def test_ready_flow_transitions_to_pending(self):
+        # ready entry를 Redis Stream으로 보낸 뒤에는 결과 대기 상태(pending)로 바뀌어야 한다.
+        # pending 상태는 같은 flow를 중복 publish하지 않기 위한 잠금 역할을 한다.
         cache = TrafficGeneratorOnlineFlowCache(
             feature_packet_count=1,
             src_index_by_ip={"10.0.0.1": 0},
@@ -179,6 +189,8 @@ class TrafficGeneratorOnlineFlowCacheTest(unittest.TestCase):
         self.assertFalse(cache.flow_cache.is_ready(entry))
 
     def test_pending_flow_does_not_collect_more_packets(self):
+        # feature를 이미 Stream에 올린 flow가 계속 패킷을 더 모으면,
+        # worker가 받은 request payload와 cache 내부 상태가 달라질 수 있다.
         cache = TrafficGeneratorOnlineFlowCache(
             feature_packet_count=1,
             src_index_by_ip={"10.0.0.1": 0},
@@ -217,6 +229,8 @@ class TrafficGeneratorOnlineFlowCacheTest(unittest.TestCase):
         self.assertEqual(entry.payload_bytes, 120)
 
     def test_ack_only_packet_is_skipped_in_active_flow(self):
+        # ACK-only 패킷은 tcp_len이 0이라 모델 feature로 쓰지 않는다.
+        # active flow 안에 있어도 payload_bytes와 packets에 추가되지 않아야 한다.
         cache = TrafficGeneratorOnlineFlowCache(
             feature_packet_count=2,
             src_index_by_ip={"10.0.0.1": 0},
@@ -253,6 +267,8 @@ class TrafficGeneratorOnlineFlowCacheTest(unittest.TestCase):
         self.assertFalse(cache.flow_cache.is_ready(entry))
 
     def test_response_ack_only_before_response_metadata_is_skipped(self):
+        # 요청(src_to_dst) 뒤에 응답 ACK-only가 먼저 보일 수 있다.
+        # 아직 dst_to_src metadata를 못 봤다면 응답 flow_id를 알 수 없으므로 그 ACK는 버린다.
         cache = TrafficGeneratorOnlineFlowCache(
             feature_packet_count=2,
             src_index_by_ip={"10.0.0.1": 0},

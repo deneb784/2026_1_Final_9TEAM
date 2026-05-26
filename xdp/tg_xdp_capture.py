@@ -23,11 +23,20 @@ from pipeline.realtime.online_request import build_online_flow_request
 from pipeline.redis.transport import RedisStreamProducer
 
 
+# MAX_PAYLOAD_PREFIX는 캡처해 올 payload prefix(앞부분) 최대 바이트 수입니다.
+# XDP/BPF 쪽에서 패킷의 payload 앞부분만 읽어와 user-space로 전달합니다.
+# 이렇게 하면 커널에서 무거운 작업을 피하고, 사용자 공간에서 flow 식별과
+# 상세 처리를 수행할 수 있습니다.
 MAX_PAYLOAD_PREFIX = 32
 
 
-# BCC가 런타임에 컴파일해 인터페이스에 attach할 XDP 프로그램이다.
-# 커널 쪽에서는 TCP/IP 헤더와 payload 앞부분만 추출하고, flow 식별은 user-space가 맡는다.
+# BPF 프로그램(문자열)은 BCC에 의해 런타임에 컴파일되어 네트워크 인터페이스에
+# XDP hook으로 붙습니다. 이 프로그램은 매우 제한된 환경(예: 루프 금지, 제한된
+# 스택 등)에서 동작하므로 가능한 최소한의 검사와 바이트 추출만 수행합니다.
+#
+# - Ethernet/IP/TCP 헤더 유효성 검사
+# - TCP payload 앞부분을 최대 MAX_PAYLOAD_PREFIX 바이트까지 읽음
+# - 읽은 정보를 perf 이벤트로 user-space에 전달
 BPF_PROGRAM = r"""
 #include <linux/bpf.h>
 #include <linux/if_ether.h>
@@ -47,12 +56,24 @@ BPF_PROGRAM = r"""
 
 BPF_ARRAY(kernel_stats, __u64, 8);
 
+/*
+ * kernel_stats 맵 설명:
+ * - BPF_ARRAY 'kernel_stats'는 런타임에 각 단계별 카운터를 유지합니다.
+ * - 사용자 공간은 이 맵을 읽어 XDP에서 처리된 패킷 통계를 확인합니다.
+ */
+
 static __always_inline void count_stat(__u32 index)
 {
     __u64 *value = kernel_stats.lookup(&index);
     if (value)
         __sync_fetch_and_add(value, 1);
 }
+
+/*
+ * count_stat:
+ * - 각 처리 지점에서 호출되어 kernel_stats 맵의 해당 인덱스 값을 원자적으로 증가시킵니다.
+ * - __sync_fetch_and_add를 사용하여 concurrency 안전하게 카운트를 증가시킵니다.
+ */
 
 struct packet_event_t {
     __u64 ts_ns;
@@ -77,12 +98,34 @@ struct packet_event_t {
     __u8 payload_prefix[MAX_PAYLOAD_PREFIX];
 };
 
+/*
+ * packet_event_t 구조체 설명(주요 필드):
+ * - ts_ns: 커널의 monotonic timestamp (나노초)
+ * - ifindex: 패킷이 수신된 인터페이스 인덱스
+ * - frame_len: 프레임(이더넷) 전체 길이
+ * - saddr/daddr: IPv4 소스/목적지 주소 (네트워크 바이트 오더)
+ * - seq/ack_seq: TCP 시퀀스/ACK 필드
+ * - sport/dport: TCP 포트 (호스트 오더로 전달하지 않음 — 사용자 공간에서 변환)
+ * - ip_len, tcp_len: IP/TCP 길이 정보
+ * - tcp_flags: TCP 플래그 바이트
+ * - payload_prefix_len: payload_prefix에 유효한 바이트 수
+ * - payload_prefix: 페이로드 앞부분 (최대 MAX_PAYLOAD_PREFIX)
+ *
+ * 이 구조체는 perf 이벤트로 출력되어 Python 프로세스가 해석합니다.
+ */
+
 BPF_PERF_OUTPUT(events);
 
 int xdp_tg_capture(struct xdp_md *ctx)
 {
+    /*
+     * xdp 프로그램의 진입점입니다. ctx로부터 패킷 데이터의 시작/끝 포인터를 얻고
+     * 여러 유효성 검사를 순차적으로 수행합니다. 검사에 실패하면 XDP_PASS로
+     * 패킷을 커널 네트워킹 스택에 넘깁니다.
+     */
     void *data = (void *)(long)ctx->data;
     void *data_end = (void *)(long)ctx->data_end;
+    /* 진입 훅 카운트 증가 */
     count_stat(STAT_HOOK);
 
     struct ethhdr *eth = data;
@@ -99,6 +142,7 @@ int xdp_tg_capture(struct xdp_md *ctx)
 
     if (ip->protocol != IPPROTO_TCP)
         return XDP_PASS;
+    /* IP 패킷이고 TCP가 아니면 빠져나감 */
     count_stat(STAT_IP_TCP);
 
     __u8 ip_hdr_len = (((__u8 *)ip)[0] & 0x0f) * 4;
@@ -157,13 +201,18 @@ int xdp_tg_capture(struct xdp_md *ctx)
         event.payload_prefix_len = 20;
     }
 
+    /* 추출한 이벤트를 perf 버퍼로 사용자 공간에 제출 */
     events.perf_submit(ctx, &event, sizeof(event));
+    /* 제출 카운트 증가 */
     count_stat(STAT_SUBMIT);
     return XDP_PASS;
 }
 """
 
 
+# Python 쪽에서 C의 packet_event_t와 매칭되는 ctypes 구조체입니다.
+# 이 구조체는 BPF가 perf 이벤트로 전송한 바이너리 레이아웃을 그대로 표현합니다.
+# 필드 타입과 순서는 C 구조체와 정확히 일치해야 하며, 바이트 오더에 유의해야 합니다.
 class BpfPacketEvent(ct.Structure):
     _fields_ = [
         ("ts_ns", ct.c_ulonglong),
@@ -216,7 +265,16 @@ def make_event(
     ifname_by_index: dict[int, str],
     monotonic_to_epoch_offset_ns: int,
 ) -> XdpPacketEvent:
-    """커널 perf event 구조체를 Python 파이프라인이 쓰는 XdpPacketEvent로 바꾼다."""
+    """커널 perf event 구조체를 Python 파이프라인이 쓰는 XdpPacketEvent로 바꾼다.
+
+    설명:
+    - raw: ctypes로 해석한 BPF의 packet_event_t 구조체
+    - frame_number: 이 프로세스가 받은 순번(Perf 이벤트 순서)
+    - ifname_by_index: 인터페이스 인덱스 -> 이름 매핑
+    - monotonic_to_epoch_offset_ns: 커널의 monotonic 타임스탬프를 epoch로 변환하기 위한 오프셋
+
+    반환값은 pipeline에서 사용하는 XdpPacketEvent 데이터 클래스입니다.
+    """
     prefix_len = int(raw.payload_prefix_len)
     payload_prefix = bytes(raw.payload_prefix[:prefix_len])
     ifname = ifname_by_index.get(int(raw.ifindex), f"ifindex-{int(raw.ifindex)}")
@@ -272,6 +330,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    # 프로그램 진입점: 인자 파싱, BPF 컴파일/로딩, perf 버퍼 핸들러 등록, 메인 루프 실행
     args = parse_args()
     interfaces = list(dict.fromkeys(args.interface))
     ifname_by_index = {
@@ -320,7 +379,17 @@ def main() -> int:
         return args.publish_direction == "all" or entry.direction == args.publish_direction
 
     def on_event(cpu: int, data: int, size: int) -> None:
-        """perf buffer에서 받은 패킷 이벤트를 online FlowCache에 반영한다."""
+        """perf 버퍼로부터 전달된 패킷 이벤트를 처리한다.
+
+        처리 흐름:
+        1) perf로 받은 바이너리를 ctypes 구조체로 변환
+        2) make_event로 의미 있는 Python 객체로 변환
+        3) 패킷 방향(src/dst) 집계
+        4) TrafficGenerator 메타데이터 파싱
+        5) online_cache에 이벤트를 전달하여 flow 매칭/ready 상태 판단
+        6) ready한 flow는 로그 출력 및 (옵션) Redis Stream에 publish
+        7) 오류는 stderr에 기록하고 통계를 갱신
+        """
         nonlocal frame_number
         frame_number += 1
         stats["events"] += 1

@@ -505,6 +505,18 @@ Stream 초기화:
 redis-cli -s /tmp/capstone-redis.sock DEL flow_features flow_features:latency
 ```
 
+Redis가 떠 있는지 확인:
+
+```bash
+redis-cli -s /tmp/capstone-redis.sock PING
+```
+
+정상이라면 다음처럼 출력된다.
+
+```text
+PONG
+```
+
 실험/분석에서 사용하는 URL:
 
 ```text
@@ -512,6 +524,62 @@ unix:///tmp/capstone-redis.sock?db=0
 ```
 
 `redis+unix://`는 현재 `redis-py`에서 지원하지 않는 scheme이므로 사용하지 않는다.
+
+### Redis Stream 적재 여부를 눈으로 확인하는 명령
+
+실험을 시작하기 전에 Stream을 비운다.
+
+```bash
+redis-cli -s /tmp/capstone-redis.sock DEL flow_features flow_features:latency
+```
+
+다른 터미널에서 Stream 길이를 1초마다 확인한다.
+
+```bash
+watch -n 1 'redis-cli -s /tmp/capstone-redis.sock XLEN flow_features; redis-cli -s /tmp/capstone-redis.sock XLEN flow_features:latency'
+```
+
+의미:
+
+- `flow_features`: 모델 worker가 읽어 갈 실제 online feature request Stream
+- `flow_features:latency`: `XADD` 시작/완료 시각 등을 담은 latency 분석용 보조 Stream
+
+실험 중 위 숫자가 증가하면 Redis Stream에 request가 정상적으로 올라가고 있다는 뜻이다.
+
+최근에 올라온 request 3개를 확인한다.
+
+```bash
+redis-cli -s /tmp/capstone-redis.sock XREVRANGE flow_features + - COUNT 3
+```
+
+최근 latency entry 3개를 확인한다.
+
+```bash
+redis-cli -s /tmp/capstone-redis.sock XREVRANGE flow_features:latency + - COUNT 3
+```
+
+payload를 문자열로 조금 더 읽기 쉽게 보고 싶으면 `--raw`를 붙인다.
+
+```bash
+redis-cli -s /tmp/capstone-redis.sock --raw XREVRANGE flow_features + - COUNT 1
+```
+
+Stream 전체 개수만 빠르게 확인할 때는 다음 명령을 쓴다.
+
+```bash
+redis-cli -s /tmp/capstone-redis.sock XLEN flow_features
+redis-cli -s /tmp/capstone-redis.sock XLEN flow_features:latency
+```
+
+실험 후 latency 요약은 분석 스크립트로 확인한다.
+
+```bash
+python3 analyze/redis_stream_latency.py \
+  --redis-url 'unix:///tmp/capstone-redis.sock?db=0' \
+  --stream flow_features \
+  --run-id <RUN_ID> \
+  --capture-mode <xdp|tshark>
+```
 
 ## 15. XDP latency 계측 보강
 

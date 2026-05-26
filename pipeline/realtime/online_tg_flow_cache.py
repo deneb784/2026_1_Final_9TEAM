@@ -7,6 +7,9 @@ from pipeline.flow_cache import FlowCache
 from pipeline.models import FlowEntry, PacketRecord, RequestMeta
 
 
+# TrafficGenerator가 TCP payload 맨 앞에 little-endian unsigned int 5개를 붙인다.
+# XDP는 payload 전체를 복사하지 않고 앞부분(prefix)만 넘기므로, 여기서는 그 prefix에서
+# request 경계를 찾는다. 즉, TCP 5-tuple이 아니라 TG metadata가 "논리 flow"의 시작 신호다.
 TG_METADATA_SIZE = 20
 TG_FLOW_DIR_SRC_TO_DST = 0
 TG_FLOW_DIR_DST_TO_SRC = 1
@@ -19,6 +22,8 @@ TG_DIRECTION_TO_NAME = {
 
 @dataclass(frozen=True)
 class TrafficGeneratorMetadata:
+    """TrafficGenerator payload prefix에서 읽은 논리 요청 메타데이터."""
+
     flow_id: int
     size_bytes: int
     tos: int
@@ -27,25 +32,32 @@ class TrafficGeneratorMetadata:
 
     @property
     def direction(self) -> str:
+        # payload 안 direction 값은 정수라서, FlowCache에서 쓰는 문자열 방향으로 바꾼다.
         return TG_DIRECTION_TO_NAME[self.direction_value]
 
     @property
     def dscp(self) -> int:
+        # IPv4 TOS의 상위 6bit가 DSCP이고, 하위 2bit는 ECN이다.
         return self.tos >> 2
 
 
 @dataclass(frozen=True)
 class XdpPacketEvent:
+    """XDP 프로그램이 관측한 TCP 패킷 1개를 Python 쪽에서 다루기 위한 구조체."""
+
+    # ts_us는 캡처 기준 상대 시간, epoch_ts_us는 가능할 때 제공되는 wall-clock epoch 시간이다.
     ts_us: int
     epoch_ts_us: int | None
     frame_number: int
     ifname: str
 
+    # 5-tuple 중 IP/port 4개. protocol은 이 경로에서 TCP로 이미 필터링되었다고 본다.
     src_ip: str
     dst_ip: str
     src_port: int
     dst_port: int
 
+    # IP 계층에서 모델 feature로 쓰거나 검증에 필요한 값들.
     frame_len: int
     ip_len: int
     ip_hdr_len: int
@@ -53,12 +65,14 @@ class XdpPacketEvent:
     ip_dscp: int
     ip_ecn: int
 
+    # TCP 계층 값. tcp_len은 payload 길이이며, 0이면 보통 ACK-only 패킷이다.
     tcp_len: int
     tcp_hdr_len: int
     tcp_seq: int
     tcp_ack: int
     tcp_flags: int
     tcp_window_size: int
+    # TrafficGenerator metadata를 읽기 위해 XDP가 복사해 준 payload 앞부분.
     payload_prefix: bytes = b""
 
     @property
@@ -84,19 +98,26 @@ class XdpPacketEvent:
 
 @dataclass
 class _DirectionalFlowState:
+    """현재 TCP connection의 한 방향에서 진행 중인 TrafficGenerator flow 상태."""
+
+    # meta는 FlowCache entry를 만들 때 필요한 논리 flow 식별 정보이고,
+    # remaining_tcp_payload_bytes는 metadata+payload를 얼마나 더 소비해야 이 flow가 끝나는지 나타낸다.
     meta: RequestMeta
     remaining_tcp_payload_bytes: int
 
 
 def parse_tg_metadata(payload_prefix: bytes) -> TrafficGeneratorMetadata | None:
     """TrafficGenerator가 payload 앞에 붙이는 5개 unsigned-int 메타데이터를 읽는다."""
+    # payload prefix가 20바이트보다 짧으면 아직 TG metadata를 판단할 수 없다.
     if len(payload_prefix) < TG_METADATA_SIZE:
         return None
 
+    # TrafficGenerator 쪽 C/C++ 구조와 맞추기 위해 little-endian unsigned int 5개로 해석한다.
     flow_id, size_bytes, tos, rate_mbps, direction_value = struct.unpack(
         "<IIIII",
         payload_prefix[:TG_METADATA_SIZE],
     )
+    # direction 값이 약속된 0/1이 아니면 TG flow 시작 패킷으로 보지 않는다.
     if direction_value not in TG_DIRECTION_TO_NAME:
         return None
 
@@ -118,6 +139,8 @@ def build_default_src_index_by_ip(
     src_pods: tuple[int, ...] = (0, 1),
 ) -> dict[str, int]:
     """기본 fat-tree에서 flowGenerator가 srcHosts를 나열하는 순서를 재현한다."""
+    # src_index는 dataset/label 쪽에서 쓰는 송신 host 번호다.
+    # 온라인 XDP 이벤트에는 IP만 있으므로, 기본 토폴로지의 IP 순서를 다시 계산해 매핑한다.
     index_by_ip: dict[str, int] = {}
     index = 0
     for pod in range(k):
@@ -136,6 +159,9 @@ class TrafficGeneratorOnlineFlowCache:
     TrafficGenerator는 하나의 persistent TCP connection에 여러 요청을 순차적으로
     실을 수 있다. 따라서 5-tuple은 connection만 식별하고, 실제 request 경계는
     각 요청/응답 payload 시작 부분의 TrafficGenerator metadata로 판별한다.
+
+    여기서 만들어진 ready FlowEntry는 online_request.py에서 모델 입력 payload로 변환되고,
+    그 payload는 Redis Stream에 XADD되어 classifier worker가 비동기로 읽어 간다.
     """
 
     def __init__(
@@ -147,10 +173,14 @@ class TrafficGeneratorOnlineFlowCache:
         self.flow_cache = FlowCache(feature_packet_count=feature_packet_count)
         self.src_index_by_ip = src_index_by_ip or build_default_src_index_by_ip()
         self.server_port = server_port
+        # key는 "client/server 4-tuple + 방향"이다. 같은 TCP connection에서도 양방향 요청/응답이
+        # 별도 flow로 처리되므로 direction까지 포함한다.
         self._states: dict[tuple[str, int, str, int, str], _DirectionalFlowState] = {}
 
     def process_event(self, event: XdpPacketEvent) -> FlowEntry | None:
         """패킷 이벤트 하나를 처리하고, flow에 매칭되면 갱신된 entry를 반환한다."""
+        # server_port를 기준으로 client->server인지 server->client인지 먼저 결정한다.
+        # TrafficGenerator metadata의 direction과 실제 포트 방향이 일치할 때만 새 flow로 인정한다.
         direction = self._infer_direction(event)
         if direction is None:
             return None
@@ -161,6 +191,7 @@ class TrafficGeneratorOnlineFlowCache:
 
         if tg_meta is not None and tg_meta.direction == direction:
             # 같은 5-tuple이라도 새 metadata가 보이면 새 TrafficGenerator flow가 시작된 것이다.
+            # persistent connection 안에 여러 논리 request가 이어 붙는 구조라서 이 처리가 핵심이다.
             state = self._start_flow(event, tg_meta, direction)
             self._states[state_key] = state
 
@@ -168,8 +199,11 @@ class TrafficGeneratorOnlineFlowCache:
             # metadata를 아직 보지 못한 connection 중간 패킷은 flow_id를 알 수 없어 버린다.
             return None
         if event.tcp_len <= 0:
+            # ACK-only 패킷은 모델 feature로 쓰지 않고 payload byte 진행량도 없으므로 건너뛴다.
             return None
 
+        # FlowCache는 (src_index, flow_id, direction) 단위로 PacketRecord를 모은다.
+        # feature_packet_count만큼 payload 패킷이 쌓이면 ready 상태로 간주된다.
         packet = self._event_to_packet_record(event)
         entry = self.flow_cache.add_packet(state.meta, direction, packet)
 
@@ -181,6 +215,7 @@ class TrafficGeneratorOnlineFlowCache:
         return entry
 
     def ready_entries(self) -> list[FlowEntry]:
+        # 아직 Redis Stream으로 보내지 않은(default 상태) entry 중 feature_packet_count를 채운 것만 반환한다.
         return [
             entry
             for entry in self.flow_cache.entries.values()
@@ -188,12 +223,16 @@ class TrafficGeneratorOnlineFlowCache:
         ]
 
     def mark_feature_sent(self, entry: FlowEntry) -> None:
+        # worker에게 feature 요청을 이미 보낸 flow는 중복 전송되지 않도록 sent로 표시한다.
         self.flow_cache.mark_feature_sent(entry)
 
     def mark_pending(self, entry: FlowEntry) -> None:
+        # Redis Stream에 올렸지만 결과를 아직 기다리는 flow는 pending으로 표시한다.
         self.flow_cache.mark_pending(entry)
 
     def _infer_direction(self, event: XdpPacketEvent) -> str | None:
+        # 서버가 listen하는 port를 기준으로 방향을 추론한다.
+        # dst_port가 server_port면 요청 방향, src_port가 server_port면 응답 방향이다.
         if event.dst_port == self.server_port:
             return "src_to_dst"
         if event.src_port == self.server_port:
@@ -205,6 +244,8 @@ class TrafficGeneratorOnlineFlowCache:
         event: XdpPacketEvent,
         direction: str,
     ) -> tuple[str, int, str, int, str]:
+        # 방향과 무관하게 key의 앞쪽은 client, 뒤쪽은 server가 되도록 정규화한다.
+        # 이렇게 해야 응답 방향(dst_to_src)에서도 같은 connection을 안정적으로 찾을 수 있다.
         if direction == "src_to_dst":
             client_ip, client_port = event.src_ip, event.src_port
             server_ip, server_port = event.dst_ip, event.dst_port
@@ -219,6 +260,7 @@ class TrafficGeneratorOnlineFlowCache:
         tg_meta: TrafficGeneratorMetadata,
         direction: str,
     ) -> _DirectionalFlowState:
+        # event의 src/dst는 패킷 방향에 따라 바뀌므로, 먼저 client/server 관점으로 정규화한다.
         if direction == "src_to_dst":
             client_ip, client_port = event.src_ip, event.src_port
             server_ip, server_port = event.dst_ip, event.dst_port
@@ -247,12 +289,15 @@ class TrafficGeneratorOnlineFlowCache:
         direction: str,
         start_time_us: int,
     ) -> _DirectionalFlowState:
+        # TG metadata도 TCP payload 일부로 전송되므로, flow 종료 판단에는 metadata 20바이트까지 포함한다.
         total_payload_bytes = TG_METADATA_SIZE + tg_meta.size_bytes
 
         src_index = self.src_index_by_ip.get(client_ip)
         if src_index is None:
             raise KeyError(f"missing src_index mapping for client IP {client_ip}")
 
+        # RequestMeta는 offline pcap 기반 FlowCache와 같은 구조를 쓰기 위한 공통 메타데이터다.
+        # 온라인 경로에서는 server_id/connection_id/fct_us 같은 값이 아직 없으므로 0으로 채운다.
         meta = RequestMeta(
             src_index=src_index,
             flow_id=tg_meta.flow_id,
@@ -279,6 +324,8 @@ class TrafficGeneratorOnlineFlowCache:
         )
 
     def _event_to_packet_record(self, event: XdpPacketEvent) -> PacketRecord:
+        # 기존 dataset builder가 PacketRecord를 입력으로 받으므로,
+        # XDP 이벤트를 offline pcap 파싱 결과와 같은 형태로 맞춰준다.
         packet = PacketRecord(
             source_file=event.ifname,
             frame_number=event.frame_number,
@@ -313,5 +360,6 @@ class TrafficGeneratorOnlineFlowCache:
             fast_retransmission=False,
         )
         if event.epoch_ts_us is not None:
+            # latency 분석용 wall-clock timestamp는 PacketRecord 기본 필드가 아니라 동적으로 붙인다.
             packet.epoch_ts_us = event.epoch_ts_us
         return packet
