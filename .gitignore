@@ -16,4 +16,4 @@ model/model_train_test/
 *.pdf
 *.tgz
 *.jsonl
-
+model/step_GRU/dataset/elephant_dst_to_src/
