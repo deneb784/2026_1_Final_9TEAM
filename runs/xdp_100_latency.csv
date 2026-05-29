@@ -1,1 +1,0 @@
-stream_id,run_id,capture_mode,logical_flow_id,direction,ready_to_redis_ms,publish_to_redis_ms,first_packet_to_redis_ms,last_packet_to_redis_ms

@@ -130,6 +130,8 @@ class XdpPacketCapturer:
         redis_url: str | None = None,
         redis_stream: str = "flow_features",
         redis_stream_maxlen: int | None = None,
+        redis_response_channel: str = "flow_results",
+        classification_log: str | None = None,
         publish_direction: str = "dst_to_src",
         project_root: str | None = None,
         startup_wait_sec: float = 3.0,
@@ -144,6 +146,8 @@ class XdpPacketCapturer:
         self.redis_url = redis_url
         self.redis_stream = redis_stream
         self.redis_stream_maxlen = redis_stream_maxlen
+        self.redis_response_channel = redis_response_channel
+        self.classification_log = classification_log
         self.publish_direction = publish_direction
         self.project_root = project_root or PROJECT_ROOT
         self.startup_wait_sec = startup_wait_sec
@@ -194,6 +198,9 @@ class XdpPacketCapturer:
             cmd += ["--run-id", self.run_id]
         if self.redis_url is not None:
             cmd += ["--redis-url", self.redis_url, "--redis-stream", self.redis_stream]
+            cmd += ["--redis-response-channel", self.redis_response_channel]
+            if self.classification_log is not None:
+                cmd += ["--classification-log", self.classification_log]
             if self.redis_stream_maxlen is not None:
                 cmd += ["--redis-stream-maxlen", str(self.redis_stream_maxlen)]
         self.process = subprocess.Popen(
@@ -236,6 +243,8 @@ class NodeXdpPacketCapturer:
         redis_url: str | None = None,
         redis_stream: str = "flow_features",
         redis_stream_maxlen: int | None = None,
+        redis_response_channel: str = "flow_results",
+        classification_log: str | None = None,
         publish_direction: str = "dst_to_src",
         project_root: str | None = None,
         startup_wait_sec: float = 3.0,
@@ -250,6 +259,8 @@ class NodeXdpPacketCapturer:
         self.redis_url = redis_url
         self.redis_stream = redis_stream
         self.redis_stream_maxlen = redis_stream_maxlen
+        self.redis_response_channel = redis_response_channel
+        self.classification_log = classification_log
         self.publish_direction = publish_direction
         self.project_root = project_root or PROJECT_ROOT
         self.startup_wait_sec = startup_wait_sec
@@ -298,6 +309,9 @@ class NodeXdpPacketCapturer:
                 cmd += ["--run-id", self.run_id]
             if self.redis_url is not None:
                 cmd += ["--redis-url", self.redis_url, "--redis-stream", self.redis_stream]
+                cmd += ["--redis-response-channel", self.redis_response_channel]
+                if self.classification_log is not None:
+                    cmd += ["--classification-log", self.classification_log]
                 if self.redis_stream_maxlen is not None:
                     cmd += ["--redis-stream-maxlen", str(self.redis_stream_maxlen)]
             process = cp.node.popen(

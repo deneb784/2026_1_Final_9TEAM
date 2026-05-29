@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import argparse
 import ctypes as ct
+import json
 import socket
 import struct
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -20,6 +22,7 @@ from pipeline.realtime.online_tg_flow_cache import (
     build_default_src_index_by_ip,
 )
 from pipeline.realtime.online_request import build_online_flow_request
+from pipeline.redis.result_subscriber import RedisResultSubscriber
 from pipeline.redis.transport import RedisStreamProducer
 
 
@@ -255,6 +258,54 @@ KERNEL_STAT_NAMES = [
 ]
 
 
+def _duration_ms(start_ns: int | None, end_ns: int | None) -> float | None:
+    if start_ns is None or end_ns is None:
+        return None
+    return (end_ns - start_ns) / 1_000_000
+
+
+def _int_or_none(value) -> int | None:
+    if value in (None, ""):
+        return None
+    return int(value)
+
+
+def _append_jsonl(path: str | None, row: dict) -> None:
+    if path is None:
+        return
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def add_e2e_latency_fields(result: dict, cache_apply_start_wall_ns: int, cache_updated_wall_ns: int) -> dict:
+    """Add end-to-end timing fields to a classifier result row."""
+    producer_metrics = result.get("producer_metrics") or {}
+    feature_ready_wall_ns = _int_or_none(producer_metrics.get("feature_ready_wall_ns"))
+    worker_received_wall_ns = _int_or_none(result.get("worker_received_wall_ns"))
+    worker_done_wall_ns = _int_or_none(result.get("worker_infer_end_wall_ns"))
+    result_publish_wall_ns = _int_or_none(result.get("result_publish_wall_ns"))
+    subscriber_received_wall_ns = _int_or_none(result.get("subscriber_received_wall_ns"))
+
+    result["cache_apply_start_wall_ns"] = cache_apply_start_wall_ns
+    result["cache_updated_wall_ns"] = cache_updated_wall_ns
+    result["cache_apply_duration_ms"] = _duration_ms(cache_apply_start_wall_ns, cache_updated_wall_ns)
+    result["ready_to_cache_updated_ms"] = _duration_ms(feature_ready_wall_ns, cache_updated_wall_ns)
+    result["ready_to_worker_received_ms"] = _duration_ms(feature_ready_wall_ns, worker_received_wall_ns)
+    result["worker_received_to_done_ms"] = _duration_ms(worker_received_wall_ns, worker_done_wall_ns)
+    result["worker_done_to_publish_ms"] = _duration_ms(worker_done_wall_ns, result_publish_wall_ns)
+    result["pubsub_publish_to_subscriber_ms"] = _duration_ms(
+        result_publish_wall_ns,
+        subscriber_received_wall_ns,
+    )
+    result["subscriber_to_cache_updated_ms"] = _duration_ms(
+        subscriber_received_wall_ns,
+        cache_updated_wall_ns,
+    )
+    return result
+
+
 def ip_to_str(value: int) -> str:
     return socket.inet_ntoa(struct.pack("I", value))
 
@@ -320,6 +371,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--redis-url", default=None)
     parser.add_argument("--redis-stream", default="flow_features")
     parser.add_argument("--redis-stream-maxlen", type=int, default=None)
+    parser.add_argument("--redis-response-channel", default="flow_results")
+    parser.add_argument(
+        "--classification-log",
+        default=None,
+        help="Append FlowCache classification updates and E2E timing fields as JSONL",
+    )
     parser.add_argument(
         "--publish-direction",
         choices=["src_to_dst", "dst_to_src", "all"],
@@ -359,7 +416,9 @@ def main() -> int:
         "published": 0,
         "key_errors": 0,
         "publish_errors": 0,
+        "classified": 0,
     }
+    stats_lock = threading.Lock()
     direction_counts = {
         "src_to_dst": 0,
         "dst_to_src": 0,
@@ -374,6 +433,35 @@ def main() -> int:
         if args.redis_url
         else None
     )
+    result_subscriber = None
+
+    def on_classifier_result(result: dict) -> None:
+        cache_apply_start_wall_ns = time.time_ns()
+        updated = online_cache.apply_classification_result(result)
+        cache_updated_wall_ns = time.time_ns()
+        if updated is None:
+            return
+        add_e2e_latency_fields(result, cache_apply_start_wall_ns, cache_updated_wall_ns)
+        updated.classification_result = dict(result)
+        _append_jsonl(args.classification_log, result)
+        with stats_lock:
+            stats["classified"] += 1
+        if args.print_ready:
+            print(
+                "[classified] src_index=%s flow_id=%s direction=%s label=%s score=%.4f e2e_ms=%s"
+                % (
+                    updated.src_index,
+                    updated.flow_id,
+                    updated.direction,
+                    updated.status,
+                    updated.model_score if updated.model_score is not None else -1.0,
+                    (
+                        "%.3f" % result["ready_to_cache_updated_ms"]
+                        if result.get("ready_to_cache_updated_ms") is not None
+                        else "n/a"
+                    ),
+                )
+            )
 
     def should_publish(entry) -> bool:
         return args.publish_direction == "all" or entry.direction == args.publish_direction
@@ -438,6 +526,7 @@ def main() -> int:
 
             if stream_producer is not None and should_publish(entry):
                 try:
+                    online_cache.mark_pending(entry)
                     request = build_online_flow_request(
                         entry,
                         packet_count=args.feature_packet_count,
@@ -460,10 +549,11 @@ def main() -> int:
                         )
                 except Exception as exc:
                     stats["publish_errors"] += 1
+                    online_cache.flow_cache.set_status(entry, "default")
                     print(f"[redis] stream publish failed: {exc}", file=sys.stderr)
                     return
-
-            online_cache.mark_pending(entry)
+            elif entry.status == "default":
+                online_cache.mark_pending(entry)
 
     for ifname in interfaces:
         bpf.attach_xdp(ifname, fn, flags)
@@ -475,9 +565,15 @@ def main() -> int:
     )
     if stream_producer is not None:
         stream_producer.connect()
+        result_subscriber = RedisResultSubscriber(
+            redis_url=args.redis_url,
+            channel_name=args.redis_response_channel,
+            on_result=on_classifier_result,
+        )
+        result_subscriber.start_background()
         print(
-            "[*] Redis Stream publishing enabled (stream=%s, direction=%s)"
-            % (args.redis_stream, args.publish_direction)
+            "[*] Redis Stream publishing enabled (stream=%s, direction=%s, response_channel=%s)"
+            % (args.redis_stream, args.publish_direction, args.redis_response_channel)
         )
     print("[*] Press Ctrl-C to stop")
 
@@ -492,12 +588,14 @@ def main() -> int:
             bpf.remove_xdp(ifname, flags)
         if stream_producer is not None:
             stream_producer.close()
+        if result_subscriber is not None:
+            result_subscriber.close()
         kernel_stats = {}
         stats_map = bpf["kernel_stats"]
         for index, name in enumerate(KERNEL_STAT_NAMES):
             kernel_stats[name] = int(stats_map[ct.c_int(index)].value)
         print(
-            "[summary] events=%s metadata=%s matched=%s ready=%s published=%s "
+            "[summary] events=%s metadata=%s matched=%s ready=%s published=%s classified=%s "
             "key_errors=%s publish_errors=%s "
             "directions(src_to_dst=%s,dst_to_src=%s,unknown=%s)"
             % (
@@ -506,6 +604,7 @@ def main() -> int:
                 stats["matched"],
                 stats["ready"],
                 stats["published"],
+                stats["classified"],
                 stats["key_errors"],
                 stats["publish_errors"],
                 direction_counts["src_to_dst"],

@@ -91,6 +91,12 @@ def main():
     parser.add_argument('--redis-url', default=None)
     parser.add_argument('--redis-stream', default='flow_features')
     parser.add_argument('--redis-stream-maxlen', type=int, default=None)
+    parser.add_argument('--redis-response-channel', default='flow_results')
+    parser.add_argument(
+        '--classification-log',
+        default=None,
+        help='Path for FlowCache classification/e2e latency JSONL in XDP Redis mode',
+    )
     parser.add_argument(
         '--publish-direction',
         choices=['src_to_dst', 'dst_to_src', 'all'],
@@ -111,6 +117,9 @@ def main():
 
     os.makedirs(results_dir, exist_ok=True)
     os.makedirs(capture_dir, exist_ok=True)
+    classification_log = args.classification_log
+    if classification_log is None and args.redis_url is not None and args.capture_mode in ('xdp', 'xdp-verify'):
+        classification_log = os.path.join(results_dir, 'online_classification_latency.jsonl')
 
     # TrafficGenerator 컴파일
     os.system('cd TrafficGenerator && make && cd -')
@@ -220,6 +229,8 @@ def main():
                 redis_url=args.redis_url,
                 redis_stream=args.redis_stream,
                 redis_stream_maxlen=args.redis_stream_maxlen,
+                redis_response_channel=args.redis_response_channel,
+                classification_log=classification_log,
                 publish_direction=args.publish_direction,
             )
             if args.capture_mode == 'xdp-verify':
@@ -250,9 +261,10 @@ def main():
                     len(xdp_capture_points),
                 ))
             if args.redis_url is not None:
-                print('[*] Redis Stream 전송 활성화 (stream=%s, direction=%s)' % (
+                print('[*] Redis Stream 전송 활성화 (stream=%s, direction=%s, response_channel=%s)' % (
                     args.redis_stream,
                     args.publish_direction,
+                    args.redis_response_channel,
                 ))
         else:
             print('[*] 패킷 캡처 비활성화 (--capture-mode none)')

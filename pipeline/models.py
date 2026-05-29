@@ -76,6 +76,8 @@ class FlowEntry:
     packets: list[PacketRecord] = field(default_factory=list)
     payload_bytes: int = 0
     status: str = "default"
+    model_score: float | None = None
+    classification_result: dict | None = None
 
     @property
     def flow_key(self) -> tuple[int, int, str]:

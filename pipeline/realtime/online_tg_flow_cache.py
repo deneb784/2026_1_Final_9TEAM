@@ -230,6 +230,10 @@ class TrafficGeneratorOnlineFlowCache:
         # Redis Stream에 올렸지만 결과를 아직 기다리는 flow는 pending으로 표시한다.
         self.flow_cache.mark_pending(entry)
 
+    def apply_classification_result(self, result: dict) -> FlowEntry | None:
+        # classifier worker가 돌려준 elephant/mice 결과를 내부 FlowCache entry에 반영한다.
+        return self.flow_cache.apply_classification_result(result)
+
     def _infer_direction(self, event: XdpPacketEvent) -> str | None:
         # 서버가 listen하는 port를 기준으로 방향을 추론한다.
         # dst_port가 server_port면 요청 방향, src_port가 server_port면 응답 방향이다.

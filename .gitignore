@@ -18,4 +18,6 @@ model/model_train_test/
 *.jsonl
 dataset_univ1d.tar.gz
 redis_latency_validation_notion.md
-
+dataset/
+data/
+*.rdb
