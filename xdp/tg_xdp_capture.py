@@ -447,10 +447,11 @@ def main() -> int:
         with stats_lock:
             stats["classified"] += 1
         if args.print_ready:
+            request_key = updated.request_key or {}
             print(
                 "[classified] src_index=%s flow_id=%s direction=%s label=%s score=%.4f e2e_ms=%s"
                 % (
-                    updated.src_index,
+                    request_key.get("src_index", "n/a"),
                     updated.flow_id,
                     updated.direction,
                     updated.status,
@@ -512,10 +513,11 @@ def main() -> int:
             stats["ready"] += 1
             if args.print_ready:
                 tcp_lens = [pkt.tcp_len for pkt in entry.packets]
+                request_key = entry.request_key or {}
                 print(
                     "[ready] src_index=%s flow_id=%s direction=%s packets=%s payload_bytes=%s tcp_lens=%s"
                     % (
-                        entry.src_index,
+                        request_key.get("src_index", "n/a"),
                         entry.flow_id,
                         entry.direction,
                         len(entry.packets),
@@ -537,12 +539,13 @@ def main() -> int:
                     stream_id = stream_producer.publish(request)
                     stats["published"] += 1
                     if args.print_ready:
+                        request_key = entry.request_key or {}
                         print(
                             "[stream] id=%s stream=%s src_index=%s flow_id=%s direction=%s"
                             % (
                                 stream_id,
                                 args.redis_stream,
-                                entry.src_index,
+                                request_key.get("src_index", "n/a"),
                                 entry.flow_id,
                                 entry.direction,
                             )

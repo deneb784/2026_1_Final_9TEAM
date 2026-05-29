@@ -210,7 +210,10 @@ class StepGruStreamWorker:
         stream_fields: dict[str, str],
         worker_received_wall_ns: int,
     ) -> dict:
-        direction_name = request["request_key"]["direction"]
+        flow_key = request.get("online_flow_key") or request.get("request_key")
+        if not flow_key:
+            raise ValueError("request must contain online_flow_key or request_key")
+        direction_name = flow_key["direction"]
         seq_len = int(request.get("seq_len", len(request["x"])))
 
         if self.device.type == "cuda":
@@ -231,7 +234,8 @@ class StepGruStreamWorker:
         feature_ready_wall_ns = producer_metrics.get("feature_ready_wall_ns")
         redis_publish_start_wall_ns = stream_fields.get("publish_start_wall_ns")
         response = {
-            "request_key": request["request_key"],
+            "online_flow_key": request.get("online_flow_key"),
+            "request_key": request.get("request_key"),
             "logical_flow_id": request.get("logical_flow_id"),
             "run_id": request.get("run_id"),
             "stream_id": stream_id,

@@ -18,7 +18,7 @@ pipeline/models.py
 pipeline/flow_cache.py
 ```
 
-Shared data models and flow state cache. Both offline dataset generation and online realtime capture use these modules.
+Shared data models and the offline dataset flow cache.
 
 ## Dataset Generation
 
@@ -41,11 +41,12 @@ Offline path for reading pcap/metadata files and building train/eval datasets.
 
 ```text
 pipeline/realtime/
+  online_flow_cache.py
   online_tg_flow_cache.py
   online_request.py
 ```
 
-Online path for converting live packet events into ready flow entries and model request payloads.
+Online path for converting live packet events into realtime flow entries and model request payloads.
 
 ## Redis
 

@@ -1,6 +1,7 @@
 import unittest
 
 from pipeline.realtime.online_request import build_online_flow_request
+from pipeline.realtime.online_flow_cache import OnlineFlowEntry, OnlineFlowKey
 from pipeline.models import FlowEntry, PacketRecord
 
 
@@ -126,6 +127,35 @@ class OnlineRequestTest(unittest.TestCase):
             request["producer_metrics"]["last_packet_ts_us"],
             1_700_000_000_000_000,
         )
+
+    def test_build_online_flow_request_keeps_online_and_metric_keys(self):
+        key = OnlineFlowKey(
+            client_ip="10.0.0.1",
+            client_port=40000,
+            server_ip="10.2.0.1",
+            server_port=5001,
+            flow_id=7,
+            direction="dst_to_src",
+        )
+        entry = OnlineFlowEntry(
+            key=key,
+            request_key={
+                "src_index": 0,
+                "flow_id": 7,
+                "direction": "dst_to_src",
+            },
+        )
+        entry.packets.append(packet(frame_number=1, ts_us=1_000, tcp_len=1448))
+        entry.payload_bytes = 1448
+
+        request = build_online_flow_request(entry, packet_count=3)
+
+        self.assertEqual(request["online_flow_key"], key.as_dict())
+        self.assertEqual(request["request_key"], {
+            "src_index": 0,
+            "flow_id": 7,
+            "direction": "dst_to_src",
+        })
 
 
 if __name__ == "__main__":

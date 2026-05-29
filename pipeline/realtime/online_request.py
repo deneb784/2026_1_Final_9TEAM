@@ -1,11 +1,11 @@
 import time
+from typing import Any
 
 from pipeline.dataset.dataset_builder import FEATURE_NAMES, build_x_from_entry
-from pipeline.models import FlowEntry
 
 
 def build_online_flow_request(
-    entry: FlowEntry,
+    entry: Any,
     packet_count: int,
     run_id: str | None = None,
     capture_mode: str | None = None,
@@ -33,15 +33,21 @@ def build_online_flow_request(
         first_packet_ts_us = getattr(feature_packets[0], "epoch_ts_us", feature_packets[0].ts_us)
         last_packet_ts_us = getattr(feature_packets[-1], "epoch_ts_us", feature_packets[-1].ts_us)
 
-    # request_key는 결과가 돌아왔을 때 어떤 flow의 응답인지 다시 찾기 위한 최소 식별자다.
-    # logical_flow_id는 사람이 로그/CSV를 볼 때 읽기 쉬운 문자열 ID이고,
-    # x/seq_len/feature_names는 모델 worker가 바로 추론할 수 있는 feature 본문이다.
-    request = {
-        "request_key": {
+    request_key = getattr(entry, "request_key", None)
+    if request_key is None and hasattr(entry, "src_index"):
+        request_key = {
             "src_index": entry.src_index,
             "flow_id": entry.flow_id,
             "direction": entry.direction,
-        },
+        }
+
+    online_flow_key = getattr(entry, "online_flow_key", None)
+
+    # online_flow_key는 실시간 cache가 결과를 되붙일 때 쓰는 식별자다.
+    # request_key는 기존 offline metric join과 호환하기 위한 보조 식별자다.
+    # logical_flow_id는 사람이 로그/CSV를 볼 때 읽기 쉬운 문자열 ID이고,
+    # x/seq_len/feature_names는 모델 worker가 바로 추론할 수 있는 feature 본문이다.
+    request = {
         "logical_flow_id": entry.logical_flow_id,
         "feature_names": FEATURE_NAMES,
         "x": x,
@@ -59,6 +65,10 @@ def build_online_flow_request(
             "feature_packet_count_observed": len(feature_packets),
         },
     }
+    if online_flow_key is not None:
+        request["online_flow_key"] = dict(online_flow_key)
+    if request_key is not None:
+        request["request_key"] = dict(request_key)
     if run_id is not None:
         # run_id는 여러 실험이 같은 Redis를 공유할 때 결과와 지연 로그를 실험 단위로 묶기 위한 값이다.
         request["run_id"] = run_id

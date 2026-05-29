@@ -285,7 +285,7 @@ redis-cli -s /tmp/capstone-redis.sock --raw XREVRANGE flow_features + - COUNT 1
 runs/step_gru/*.jsonl
 ```
 
-각 줄에는 `run_id`, `logical_flow_id`, `inference_ms`, `score`, `predicted_label`, `threshold`, `exit_step`가 저장됩니다.
+각 줄에는 `online_flow_key`, metric join용 `request_key`, `run_id`, `logical_flow_id`, `inference_ms`, `score`, `predicted_label`, `threshold`, `exit_step`가 저장됩니다.
 
 ## 결과 요약 명령
 

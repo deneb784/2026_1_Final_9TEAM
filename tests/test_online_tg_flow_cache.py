@@ -8,6 +8,7 @@ from pipeline.realtime.online_tg_flow_cache import (
     XdpPacketEvent,
     parse_tg_metadata,
 )
+from pipeline.realtime.online_flow_cache import OnlineFlowKey
 
 
 def tg_meta(flow_id: int, size_bytes: int, tos: int, rate_mbps: int, direction: int) -> bytes:
@@ -56,6 +57,17 @@ def event(
         tcp_flags=tcp_flags,
         tcp_window_size=1024,
         payload_prefix=payload_prefix,
+    )
+
+
+def flow_key(flow_id: int, direction: str = "dst_to_src") -> OnlineFlowKey:
+    return OnlineFlowKey(
+        client_ip="10.0.0.1",
+        client_port=40000,
+        server_ip="10.2.0.1",
+        server_port=5001,
+        flow_id=flow_id,
+        direction=direction,
     )
 
 
@@ -122,8 +134,8 @@ class TrafficGeneratorOnlineFlowCacheTest(unittest.TestCase):
             )
         )
 
-        first = cache.flow_cache.entries[(0, 1, "dst_to_src")]
-        second = cache.flow_cache.entries[(0, 2, "dst_to_src")]
+        first = cache.flow_cache.entries[flow_key(1)]
+        second = cache.flow_cache.entries[flow_key(2)]
 
         self.assertEqual([pkt.frame_number for pkt in first.packets], [1, 2])
         self.assertEqual([pkt.frame_number for pkt in second.packets], [3])
@@ -152,8 +164,13 @@ class TrafficGeneratorOnlineFlowCacheTest(unittest.TestCase):
             )
         )
 
-        entry = cache.flow_cache.entries[(0, 3, "src_to_dst")]
+        entry = cache.flow_cache.entries[flow_key(3, "src_to_dst")]
         self.assertEqual(entry.logical_flow_id, "0:3:src_to_dst")
+        self.assertEqual(entry.request_key, {
+            "src_index": 0,
+            "flow_id": 3,
+            "direction": "src_to_dst",
+        })
         self.assertEqual(entry.payload_bytes, 20)
         self.assertEqual(entry.status, "default")
         self.assertTrue(cache.flow_cache.is_ready(entry))
@@ -179,7 +196,7 @@ class TrafficGeneratorOnlineFlowCacheTest(unittest.TestCase):
             )
         )
 
-        entry = cache.flow_cache.entries[(0, 1, "dst_to_src")]
+        entry = cache.flow_cache.entries[flow_key(1)]
         self.assertEqual(entry.status, "default")
         self.assertTrue(cache.flow_cache.is_ready(entry))
 
@@ -209,7 +226,7 @@ class TrafficGeneratorOnlineFlowCacheTest(unittest.TestCase):
                 seq=100,
             )
         )
-        entry = cache.flow_cache.entries[(0, 1, "dst_to_src")]
+        entry = cache.flow_cache.entries[flow_key(1)]
         cache.mark_pending(entry)
 
         cache.process_event(
@@ -260,7 +277,7 @@ class TrafficGeneratorOnlineFlowCacheTest(unittest.TestCase):
             )
         )
 
-        entry = cache.flow_cache.entries[(0, 1, "dst_to_src")]
+        entry = cache.flow_cache.entries[flow_key(1)]
         self.assertEqual([pkt.frame_number for pkt in entry.packets], [1])
         self.assertEqual([pkt.tcp_len for pkt in entry.packets], [120])
         self.assertEqual(entry.payload_bytes, 120)
@@ -310,10 +327,47 @@ class TrafficGeneratorOnlineFlowCacheTest(unittest.TestCase):
             )
         )
 
-        entry = cache.flow_cache.entries[(0, 4, "dst_to_src")]
+        entry = cache.flow_cache.entries[flow_key(4)]
         self.assertEqual([pkt.frame_number for pkt in entry.packets], [3])
         self.assertEqual([pkt.tcp_len for pkt in entry.packets], [120])
         self.assertEqual(entry.payload_bytes, 120)
+
+    def test_classification_result_uses_online_flow_key(self):
+        cache = TrafficGeneratorOnlineFlowCache(
+            feature_packet_count=1,
+            src_index_by_ip={"10.0.0.1": 0},
+        )
+        entry = cache.process_event(
+            event(
+                ts_us=1_000,
+                frame_number=1,
+                src_ip="10.2.0.1",
+                dst_ip="10.0.0.1",
+                src_port=5001,
+                dst_port=40000,
+                tcp_len=120,
+                payload_prefix=tg_meta(9, 200, 1, 80, TG_FLOW_DIR_DST_TO_SRC),
+            )
+        )
+        assert entry is not None
+        cache.mark_pending(entry)
+
+        updated = cache.apply_classification_result(
+            {
+                "online_flow_key": entry.online_flow_key,
+                "request_key": {
+                    "src_index": 999,
+                    "flow_id": 9,
+                    "direction": "dst_to_src",
+                },
+                "predicted_label": "elephant",
+                "score": 0.9,
+            }
+        )
+
+        self.assertIs(updated, entry)
+        self.assertEqual(entry.status, "elephant")
+        self.assertEqual(entry.model_score, 0.9)
 
 
 if __name__ == "__main__":

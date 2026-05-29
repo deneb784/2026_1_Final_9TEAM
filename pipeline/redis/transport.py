@@ -47,11 +47,14 @@ class RedisStreamProducer:
         # payload에는 worker가 추론에 필요한 전체 request를 담고,
         # 자주 필터링하거나 CSV로 뽑을 값은 별도 field로 한 번 더 복사한다.
         fields = {
-            "request_key": json.dumps(request["request_key"], ensure_ascii=False),
             "logical_flow_id": request["logical_flow_id"],
             "payload": json.dumps(request, ensure_ascii=False),
             "publish_start_wall_ns": str(publish_start_wall_ns),
         }
+        if request.get("online_flow_key") is not None:
+            fields["online_flow_key"] = json.dumps(request["online_flow_key"], ensure_ascii=False)
+        if request.get("request_key") is not None:
+            fields["request_key"] = json.dumps(request["request_key"], ensure_ascii=False)
         if request.get("run_id") is not None:
             fields["run_id"] = str(request["run_id"])
         if metrics.get("capture_mode") is not None:

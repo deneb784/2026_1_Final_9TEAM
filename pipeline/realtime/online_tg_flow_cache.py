@@ -3,8 +3,8 @@ from __future__ import annotations
 import struct
 from dataclasses import dataclass
 
-from pipeline.flow_cache import FlowCache
-from pipeline.models import FlowEntry, PacketRecord, RequestMeta
+from pipeline.models import PacketRecord
+from pipeline.realtime.online_flow_cache import OnlineFlowEntry, OnlineFlowKey, RealtimeFlowCache
 
 
 # TrafficGenerator가 TCP payload 맨 앞에 little-endian unsigned int 5개를 붙인다.
@@ -32,7 +32,7 @@ class TrafficGeneratorMetadata:
 
     @property
     def direction(self) -> str:
-        # payload 안 direction 값은 정수라서, FlowCache에서 쓰는 문자열 방향으로 바꾼다.
+        # payload 안 direction 값은 정수라서, 파이프라인에서 쓰는 문자열 방향으로 바꾼다.
         return TG_DIRECTION_TO_NAME[self.direction_value]
 
     @property
@@ -100,9 +100,10 @@ class XdpPacketEvent:
 class _DirectionalFlowState:
     """현재 TCP connection의 한 방향에서 진행 중인 TrafficGenerator flow 상태."""
 
-    # meta는 FlowCache entry를 만들 때 필요한 논리 flow 식별 정보이고,
+    # online_key는 실시간 FlowCache entry를 만들 때 필요한 논리 flow 식별 정보이고,
     # remaining_tcp_payload_bytes는 metadata+payload를 얼마나 더 소비해야 이 flow가 끝나는지 나타낸다.
-    meta: RequestMeta
+    online_key: OnlineFlowKey
+    request_key: dict | None
     remaining_tcp_payload_bytes: int
 
 
@@ -138,9 +139,13 @@ def build_default_src_index_by_ip(
     k: int = 4,
     src_pods: tuple[int, ...] = (0, 1),
 ) -> dict[str, int]:
-    """기본 fat-tree에서 flowGenerator가 srcHosts를 나열하는 순서를 재현한다."""
+    """기본 fat-tree에서 flowGenerator가 srcHosts를 나열하는 순서를 재현한다.
+
+    실시간 cache key에는 src_index를 쓰지 않는다. 이 매핑은 online 결과를
+    offline meta/dataset과 join해 metric을 계산하기 위한 request_key를 붙일 때만 사용한다.
+    """
     # src_index는 dataset/label 쪽에서 쓰는 송신 host 번호다.
-    # 온라인 XDP 이벤트에는 IP만 있으므로, 기본 토폴로지의 IP 순서를 다시 계산해 매핑한다.
+    # 온라인 XDP 이벤트에는 IP만 있으므로, metric 호환이 필요할 때 IP로부터 보조 key를 만든다.
     index_by_ip: dict[str, int] = {}
     index = 0
     for pod in range(k):
@@ -160,7 +165,7 @@ class TrafficGeneratorOnlineFlowCache:
     실을 수 있다. 따라서 5-tuple은 connection만 식별하고, 실제 request 경계는
     각 요청/응답 payload 시작 부분의 TrafficGenerator metadata로 판별한다.
 
-    여기서 만들어진 ready FlowEntry는 online_request.py에서 모델 입력 payload로 변환되고,
+    여기서 만들어진 ready OnlineFlowEntry는 online_request.py에서 모델 입력 payload로 변환되고,
     그 payload는 Redis Stream에 XADD되어 classifier worker가 비동기로 읽어 간다.
     """
 
@@ -170,14 +175,14 @@ class TrafficGeneratorOnlineFlowCache:
         src_index_by_ip: dict[str, int] | None = None,
         server_port: int = 5001,
     ):
-        self.flow_cache = FlowCache(feature_packet_count=feature_packet_count)
-        self.src_index_by_ip = src_index_by_ip or build_default_src_index_by_ip()
+        self.flow_cache = RealtimeFlowCache(feature_packet_count=feature_packet_count)
+        self.src_index_by_ip = src_index_by_ip
         self.server_port = server_port
         # key는 "client/server 4-tuple + 방향"이다. 같은 TCP connection에서도 양방향 요청/응답이
         # 별도 flow로 처리되므로 direction까지 포함한다.
         self._states: dict[tuple[str, int, str, int, str], _DirectionalFlowState] = {}
 
-    def process_event(self, event: XdpPacketEvent) -> FlowEntry | None:
+    def process_event(self, event: XdpPacketEvent) -> OnlineFlowEntry | None:
         """패킷 이벤트 하나를 처리하고, flow에 매칭되면 갱신된 entry를 반환한다."""
         # server_port를 기준으로 client->server인지 server->client인지 먼저 결정한다.
         # TrafficGenerator metadata의 direction과 실제 포트 방향이 일치할 때만 새 flow로 인정한다.
@@ -202,10 +207,15 @@ class TrafficGeneratorOnlineFlowCache:
             # ACK-only 패킷은 모델 feature로 쓰지 않고 payload byte 진행량도 없으므로 건너뛴다.
             return None
 
-        # FlowCache는 (src_index, flow_id, direction) 단위로 PacketRecord를 모은다.
+        # 실시간 FlowCache는 5-tuple을 client/server 기준으로 정규화한 online flow key로
+        # PacketRecord를 모은다. src_index 기반 request_key는 metric 호환용 보조 값일 뿐이다.
         # feature_packet_count만큼 payload 패킷이 쌓이면 ready 상태로 간주된다.
         packet = self._event_to_packet_record(event)
-        entry = self.flow_cache.add_packet(state.meta, direction, packet)
+        entry = self.flow_cache.add_packet(
+            state.online_key,
+            packet,
+            request_key=state.request_key,
+        )
 
         state.remaining_tcp_payload_bytes -= event.tcp_len
         if state.remaining_tcp_payload_bytes <= 0:
@@ -214,23 +224,11 @@ class TrafficGeneratorOnlineFlowCache:
 
         return entry
 
-    def ready_entries(self) -> list[FlowEntry]:
-        # 아직 Redis Stream으로 보내지 않은(default 상태) entry 중 feature_packet_count를 채운 것만 반환한다.
-        return [
-            entry
-            for entry in self.flow_cache.entries.values()
-            if self.flow_cache.is_ready(entry)
-        ]
-
-    def mark_feature_sent(self, entry: FlowEntry) -> None:
-        # worker에게 feature 요청을 이미 보낸 flow는 중복 전송되지 않도록 sent로 표시한다.
-        self.flow_cache.mark_feature_sent(entry)
-
-    def mark_pending(self, entry: FlowEntry) -> None:
+    def mark_pending(self, entry: OnlineFlowEntry) -> None:
         # Redis Stream에 올렸지만 결과를 아직 기다리는 flow는 pending으로 표시한다.
         self.flow_cache.mark_pending(entry)
 
-    def apply_classification_result(self, result: dict) -> FlowEntry | None:
+    def apply_classification_result(self, result: dict) -> OnlineFlowEntry | None:
         # classifier worker가 돌려준 elephant/mice 결과를 내부 FlowCache entry에 반영한다.
         return self.flow_cache.apply_classification_result(result)
 
@@ -296,34 +294,27 @@ class TrafficGeneratorOnlineFlowCache:
         # TG metadata도 TCP payload 일부로 전송되므로, flow 종료 판단에는 metadata 20바이트까지 포함한다.
         total_payload_bytes = TG_METADATA_SIZE + tg_meta.size_bytes
 
-        src_index = self.src_index_by_ip.get(client_ip)
-        if src_index is None:
-            raise KeyError(f"missing src_index mapping for client IP {client_ip}")
-
-        # RequestMeta는 offline pcap 기반 FlowCache와 같은 구조를 쓰기 위한 공통 메타데이터다.
-        # 온라인 경로에서는 server_id/connection_id/fct_us 같은 값이 아직 없으므로 0으로 채운다.
-        meta = RequestMeta(
-            src_index=src_index,
+        online_key = OnlineFlowKey(
+            client_ip=client_ip,
+            client_port=client_port,
+            server_ip=server_ip,
+            server_port=server_port,
             flow_id=tg_meta.flow_id,
-            server_id=0,
-            connection_id=0,
-            src_ip=client_ip,
-            src_port=client_port,
-            dst_ip=server_ip,
-            dst_port=server_port,
-            size_bytes=tg_meta.size_bytes,
-            dscp=tg_meta.dscp,
-            rate_mbps=tg_meta.rate_mbps,
-            start_time_us=start_time_us,
-            stop_time_us=0,
-            fct_us=0,
-            src_to_dst_flow_id=f"{src_index}:{tg_meta.flow_id}:src_to_dst",
-            dst_to_src_flow_id=f"{src_index}:{tg_meta.flow_id}:dst_to_src",
-            src_to_dst_tos=(tg_meta.dscp << 2) | TG_FLOW_DIR_SRC_TO_DST,
-            dst_to_src_tos=(tg_meta.dscp << 2) | TG_FLOW_DIR_DST_TO_SRC,
+            direction=direction,
         )
+        request_key = None
+        if self.src_index_by_ip is not None:
+            src_index = self.src_index_by_ip.get(client_ip)
+            if src_index is not None:
+                request_key = {
+                    "src_index": src_index,
+                    "flow_id": tg_meta.flow_id,
+                    "direction": direction,
+                }
+
         return _DirectionalFlowState(
-            meta=meta,
+            online_key=online_key,
+            request_key=request_key,
             remaining_tcp_payload_bytes=total_payload_bytes,
         )
 

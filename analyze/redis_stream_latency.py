@@ -161,7 +161,7 @@ def make_sample(stream_id: str, fields: dict[str, str]) -> LatencySample:
       가 유효하면 이를 기준으로 여러 지연을 계산한다.
     """
     payload = load_payload(fields)
-    request_key = payload.get("request_key") or {}
+    request_key = payload.get("request_key") or payload.get("online_flow_key") or {}
     redis_arrival_ns = parse_stream_id_ns(stream_id)
 
     # producer가 보낸 wall-clock ns 값들(문자열) 혹은 payload 내부 metric

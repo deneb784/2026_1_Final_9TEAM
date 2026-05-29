@@ -757,7 +757,7 @@ csv_results/
 - 방향별 flow 기준 학습용 `dataset.jsonl` 생성
 - `dataset_builder.py`를 통한 flow_key, x, directional_size_bytes, label 구성
 - packet sequence 기반 모델 학습 입력 생성
-- XDP 기반 온라인 FlowCache 생성
+- XDP 기반 온라인 `RealtimeFlowCache` 생성
 - Redis Stream/PubSub 기반 모델 worker 연동
 - `step_GRU` 가중치 기반 실시간 elephant/mice 추론
 - 추론 결과 JSONL 로그 저장
@@ -783,8 +783,9 @@ xdp/tg_xdp_capture.py
   └─ XdpPacketEvent 생성
       ↓
 pipeline/realtime/online_tg_flow_cache.py
-  └─ payload metadata에서 src_index, flow_id, direction 복원
-  └─ FlowCache에 packet feature 누적
+  └─ payload metadata에서 flow_id, direction 복원
+  └─ client/server 5-tuple + flow_id로 RealtimeFlowCache에 packet feature 누적
+  └─ src_index 기반 request_key는 metric join용 보조 값으로만 유지
   └─ feature_packet_count 도달 시 ready entry 생성
       ↓
 pipeline/realtime/online_request.py
@@ -799,10 +800,10 @@ model/step_GRU/stream_worker.py
   └─ Redis Pub/Sub flow_results로 결과 publish
       ↓
 pipeline/redis/result_subscriber.py
-  └─ FlowCache 상태를 elephant/mice로 갱신
+  └─ RealtimeFlowCache 상태를 elephant/mice로 갱신
 ```
 
-### 온라인 FlowCache 상태
+### 온라인 RealtimeFlowCache 상태
 
 온라인 상태는 다음처럼 변한다.
 
