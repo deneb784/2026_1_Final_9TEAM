@@ -207,6 +207,8 @@ python3 -m model.step_GRU.stream_worker \
   --model-path dataset/elephant_dst_to_src/vl2/seq10/weights.pt \
   --threshold 0.5 \
   --device cuda \
+  --read-count 8 \
+  --quiet-results \
   --idle-timeout-sec 10 \
   --result-log runs/step_gru/vl2_online_results.jsonl
 ```
@@ -221,6 +223,8 @@ python3 -m model.step_GRU.stream_worker \
   --model-path dataset/elephant_dst_to_src/fb/seq3/weights.pt \
   --threshold 0.8 \
   --device cuda \
+  --read-count 8 \
+  --quiet-results \
   --idle-timeout-sec 10 \
   --result-log runs/step_gru/fb_threshold08_online_results.jsonl
 ```

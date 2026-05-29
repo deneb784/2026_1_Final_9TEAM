@@ -69,6 +69,14 @@ def _compact_metrics(metrics: dict[str, Any] | None) -> dict[str, Any]:
         key: metrics[key]
         for key in (
             "feature_ready_wall_ns",
+            "ready_detected_wall_ns",
+            "request_built_wall_ns",
+            "publish_enqueue_start_wall_ns",
+            "publish_enqueued_wall_ns",
+            "publisher_dequeued_wall_ns",
+            "event_received_wall_ns",
+            "process_event_start_wall_ns",
+            "process_event_end_wall_ns",
             "capture_mode",
             "first_packet_ts_us",
             "last_packet_ts_us",
@@ -97,6 +105,8 @@ class StepGruStreamWorker:
         device: str = "auto",
         result_log: str | None = None,
         idle_timeout_sec: float | None = None,
+        read_count: int = 1,
+        quiet_results: bool = False,
     ):
         try:
             import redis
@@ -118,6 +128,10 @@ class StepGruStreamWorker:
         if idle_timeout_sec is not None and idle_timeout_sec <= 0:
             raise ValueError("idle_timeout_sec must be positive")
         self.idle_timeout_sec = idle_timeout_sec
+        if read_count <= 0:
+            raise ValueError("read_count must be positive")
+        self.read_count = read_count
+        self.quiet_results = quiet_results
         self.classifier = FlowClassifier(
             model_path=model_path,
             scaler_path=scaler_path,
@@ -202,6 +216,14 @@ class StepGruStreamWorker:
             if "BUSYGROUP" not in str(exc):
                 raise
 
+    def warmup(self) -> None:
+        """Run one dummy inference so the first real request does not pay setup cost."""
+        dummy_x = [[0.0] * self.input_size]
+        try:
+            self.classifier.classify(dummy_x, direction="dst_to_src", seq_len=1)
+        except Exception as exc:
+            print(f"[*] warmup skipped: {exc}", flush=True)
+
     def infer(
         self,
         request: dict,
@@ -275,6 +297,7 @@ class StepGruStreamWorker:
 
     def run(self) -> None:
         self.ensure_group()
+        self.warmup()
         print(
             "[*] step_GRU stream worker started "
             f"(stream={self.stream_name}, group={self.group_name}, "
@@ -288,7 +311,7 @@ class StepGruStreamWorker:
                 self.group_name,
                 self.consumer_name,
                 {self.stream_name: ">"},
-                count=1,
+                count=self.read_count,
                 block=1000,
             )
             if not messages:
@@ -335,16 +358,17 @@ class StepGruStreamWorker:
                     self.redis.xack(self.stream_name, self.group_name, stream_id)
                     response["stream_xack_wall_ns"] = time.time_ns()
                     self._append_result_log(response)
-                    print(
-                        "[result] stream_id=%s flow=%s score=%.4f label=%s"
-                        % (
-                            stream_id,
-                            response["logical_flow_id"],
-                            response["score"],
-                            response["predicted_label"],
-                        ),
-                        flush=True,
-                    )
+                    if not self.quiet_results:
+                        print(
+                            "[result] stream_id=%s flow=%s score=%.4f label=%s"
+                            % (
+                                stream_id,
+                                response["logical_flow_id"],
+                                response["score"],
+                                response["predicted_label"],
+                            ),
+                            flush=True,
+                        )
                     processed_messages += 1
 
 
@@ -372,6 +396,17 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=None,
         help="Stop after this many idle seconds once at least one stream message was processed",
+    )
+    parser.add_argument(
+        "--read-count",
+        type=int,
+        default=1,
+        help="Maximum Redis Stream entries to fetch per xreadgroup wakeup",
+    )
+    parser.add_argument(
+        "--quiet-results",
+        action="store_true",
+        help="Do not print one line per classified stream entry",
     )
     return parser.parse_args()
 
@@ -404,6 +439,8 @@ def main() -> int:
         device=args.device,
         result_log=args.result_log,
         idle_timeout_sec=args.idle_timeout_sec,
+        read_count=args.read_count,
+        quiet_results=args.quiet_results,
     )
     worker.run()
     return 0

@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import ctypes as ct
 import json
+import queue
 import socket
 import struct
 import sys
@@ -282,8 +283,20 @@ def add_e2e_latency_fields(result: dict, cache_apply_start_wall_ns: int, cache_u
     """Add end-to-end timing fields to a classifier result row."""
     producer_metrics = result.get("producer_metrics") or {}
     feature_ready_wall_ns = _int_or_none(producer_metrics.get("feature_ready_wall_ns"))
+    ready_detected_wall_ns = _int_or_none(producer_metrics.get("ready_detected_wall_ns"))
+    request_built_wall_ns = _int_or_none(producer_metrics.get("request_built_wall_ns"))
+    publish_enqueue_start_wall_ns = _int_or_none(
+        producer_metrics.get("publish_enqueue_start_wall_ns")
+    )
+    publish_enqueued_wall_ns = _int_or_none(producer_metrics.get("publish_enqueued_wall_ns"))
+    publisher_dequeued_wall_ns = _int_or_none(producer_metrics.get("publisher_dequeued_wall_ns"))
+    process_event_start_wall_ns = _int_or_none(producer_metrics.get("process_event_start_wall_ns"))
+    process_event_end_wall_ns = _int_or_none(producer_metrics.get("process_event_end_wall_ns"))
     worker_received_wall_ns = _int_or_none(result.get("worker_received_wall_ns"))
     worker_done_wall_ns = _int_or_none(result.get("worker_infer_end_wall_ns"))
+    redis_stream_publish_start_wall_ns = _int_or_none(
+        result.get("redis_stream_publish_start_wall_ns")
+    )
     result_publish_wall_ns = _int_or_none(result.get("result_publish_wall_ns"))
     subscriber_received_wall_ns = _int_or_none(result.get("subscriber_received_wall_ns"))
 
@@ -291,6 +304,33 @@ def add_e2e_latency_fields(result: dict, cache_apply_start_wall_ns: int, cache_u
     result["cache_updated_wall_ns"] = cache_updated_wall_ns
     result["cache_apply_duration_ms"] = _duration_ms(cache_apply_start_wall_ns, cache_updated_wall_ns)
     result["ready_to_cache_updated_ms"] = _duration_ms(feature_ready_wall_ns, cache_updated_wall_ns)
+    result["ready_to_request_built_ms"] = _duration_ms(feature_ready_wall_ns, request_built_wall_ns)
+    result["request_built_to_worker_received_ms"] = _duration_ms(request_built_wall_ns, worker_received_wall_ns)
+    result["request_built_to_publish_enqueued_ms"] = _duration_ms(
+        request_built_wall_ns,
+        publish_enqueued_wall_ns,
+    )
+    result["publish_enqueue_duration_ms"] = _duration_ms(
+        publish_enqueue_start_wall_ns,
+        publish_enqueued_wall_ns,
+    )
+    result["publish_enqueued_to_publisher_dequeued_ms"] = _duration_ms(
+        publish_enqueued_wall_ns,
+        publisher_dequeued_wall_ns,
+    )
+    result["publisher_dequeued_to_worker_received_ms"] = _duration_ms(
+        publisher_dequeued_wall_ns,
+        worker_received_wall_ns,
+    )
+    result["request_built_to_redis_publish_start_ms"] = _duration_ms(
+        request_built_wall_ns,
+        redis_stream_publish_start_wall_ns,
+    )
+    result["redis_publish_start_to_worker_received_ms"] = _duration_ms(
+        redis_stream_publish_start_wall_ns,
+        worker_received_wall_ns,
+    )
+    result["process_event_duration_ms"] = _duration_ms(process_event_start_wall_ns, process_event_end_wall_ns)
     result["ready_to_worker_received_ms"] = _duration_ms(feature_ready_wall_ns, worker_received_wall_ns)
     result["worker_received_to_done_ms"] = _duration_ms(worker_received_wall_ns, worker_done_wall_ns)
     result["worker_done_to_publish_ms"] = _duration_ms(worker_done_wall_ns, result_publish_wall_ns)
@@ -410,6 +450,7 @@ def main() -> int:
         "matched": 0,
         "ready": 0,
         "published": 0,
+        "publish_queued": 0,
         "key_errors": 0,
         "publish_errors": 0,
         "classified": 0,
@@ -430,6 +471,9 @@ def main() -> int:
         else None
     )
     result_subscriber = None
+    publish_queue: queue.Queue[tuple[dict, object] | object] = queue.Queue()
+    publisher_stop = object()
+    publisher_thread = None
 
     def on_classifier_result(result: dict) -> None:
         cache_apply_start_wall_ns = time.time_ns()
@@ -466,6 +510,43 @@ def main() -> int:
     def should_publish(entry) -> bool:
         return args.publish_direction == "all" or entry.direction == args.publish_direction
 
+    def publisher_loop() -> None:
+        assert stream_producer is not None
+        while True:
+            item = publish_queue.get()
+            try:
+                if item is publisher_stop:
+                    return
+                request, entry = item
+                request["producer_metrics"]["publisher_dequeued_wall_ns"] = time.time_ns()
+                stream_id = stream_producer.publish(request)
+                with stats_lock:
+                    stats["published"] += 1
+                if args.print_ready:
+                    flow_key = request["online_flow_key"]
+                    print(
+                        "[stream] id=%s stream=%s client=%s:%s server=%s:%s flow_id=%s direction=%s"
+                        % (
+                            stream_id,
+                            args.redis_stream,
+                            flow_key["client_ip"],
+                            flow_key["client_port"],
+                            flow_key["server_ip"],
+                            flow_key["server_port"],
+                            flow_key["flow_id"],
+                            flow_key["direction"],
+                        )
+                    )
+            except Exception as exc:
+                with stats_lock:
+                    stats["publish_errors"] += 1
+                if item is not publisher_stop:
+                    _request, entry = item
+                    online_cache.flow_cache.set_status(entry, "default")
+                print(f"[redis] stream publish failed: {exc}", file=sys.stderr)
+            finally:
+                publish_queue.task_done()
+
     def on_event(cpu: int, data: int, size: int) -> None:
         """perf 버퍼로부터 전달된 패킷 이벤트를 처리한다.
 
@@ -481,6 +562,7 @@ def main() -> int:
         nonlocal frame_number
         frame_number += 1
         stats["events"] += 1
+        event_received_wall_ns = time.time_ns()
         raw = ct.cast(data, ct.POINTER(BpfPacketEvent)).contents
         event = make_event(
             raw,
@@ -499,7 +581,9 @@ def main() -> int:
             stats["metadata"] += 1
 
         try:
+            process_event_start_wall_ns = time.time_ns()
             entry = online_cache.process_event(event)
+            process_event_end_wall_ns = time.time_ns()
         except KeyError as exc:
             stats["key_errors"] += 1
             print(f"[xdp] skip packet: {exc}", file=sys.stderr)
@@ -531,34 +615,32 @@ def main() -> int:
             if stream_producer is not None and should_publish(entry):
                 try:
                     online_cache.mark_pending(entry)
+                    ready_detected_wall_ns = time.time_ns()
                     request = build_online_flow_request(
                         entry,
                         packet_count=args.feature_packet_count,
                         run_id=args.run_id,
                         capture_mode="xdp",
-                        feature_ready_wall_ns=time.time_ns(),
+                        feature_ready_wall_ns=ready_detected_wall_ns,
                     )
-                    stream_id = stream_producer.publish(request)
-                    stats["published"] += 1
-                    if args.print_ready:
-                        key = entry.key
-                        print(
-                            "[stream] id=%s stream=%s client=%s:%s server=%s:%s flow_id=%s direction=%s"
-                            % (
-                                stream_id,
-                                args.redis_stream,
-                                key.client_ip,
-                                key.client_port,
-                                key.server_ip,
-                                key.server_port,
-                                key.flow_id,
-                                key.direction,
-                            )
-                        )
+                    request_built_wall_ns = time.time_ns()
+                    request["producer_metrics"].update(
+                        {
+                            "event_received_wall_ns": event_received_wall_ns,
+                            "process_event_start_wall_ns": process_event_start_wall_ns,
+                            "process_event_end_wall_ns": process_event_end_wall_ns,
+                            "ready_detected_wall_ns": ready_detected_wall_ns,
+                            "request_built_wall_ns": request_built_wall_ns,
+                        }
+                    )
+                    request["producer_metrics"]["publish_enqueue_start_wall_ns"] = time.time_ns()
+                    request["producer_metrics"]["publish_enqueued_wall_ns"] = time.time_ns()
+                    publish_queue.put((request, entry))
+                    stats["publish_queued"] += 1
                 except Exception as exc:
                     stats["publish_errors"] += 1
                     online_cache.flow_cache.set_status(entry, "default")
-                    print(f"[redis] stream publish failed: {exc}", file=sys.stderr)
+                    print(f"[redis] stream enqueue failed: {exc}", file=sys.stderr)
                     return
             elif entry.status == "default":
                 online_cache.mark_pending(entry)
@@ -573,6 +655,12 @@ def main() -> int:
     )
     if stream_producer is not None:
         stream_producer.connect()
+        publisher_thread = threading.Thread(
+            target=publisher_loop,
+            name="redis-stream-publisher",
+            daemon=True,
+        )
+        publisher_thread.start()
         result_subscriber = RedisResultSubscriber(
             redis_url=args.redis_url,
             channel_name=args.redis_response_channel,
@@ -587,14 +675,16 @@ def main() -> int:
 
     try:
         while True:
-            bpf.perf_buffer_poll(timeout=100)
-            time.sleep(0.001)
+            bpf.perf_buffer_poll(timeout=10)
     except KeyboardInterrupt:
         pass
     finally:
         for ifname in interfaces:
             bpf.remove_xdp(ifname, flags)
         if stream_producer is not None:
+            publish_queue.put(publisher_stop)
+            if publisher_thread is not None:
+                publisher_thread.join(timeout=2)
             stream_producer.close()
         if result_subscriber is not None:
             result_subscriber.close()
