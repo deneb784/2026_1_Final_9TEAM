@@ -471,6 +471,9 @@ def main() -> int:
         else None
     )
     result_subscriber = None
+    # perf callback 안에서 Redis XADD를 직접 수행하면 네트워크/Redis I/O 시간만큼
+    # XDP 이벤트 처리가 막힌다. 그래서 callback은 request를 이 Queue에 넣기만 하고,
+    # 실제 Redis publish는 아래 publisher_loop thread가 담당한다.
     publish_queue: queue.Queue[tuple[dict, object] | object] = queue.Queue()
     publisher_stop = object()
     publisher_thread = None
@@ -511,6 +514,7 @@ def main() -> int:
         return args.publish_direction == "all" or entry.direction == args.publish_direction
 
     def publisher_loop() -> None:
+        """on_event()에서 분리된 Redis Stream publish 전용 worker."""
         assert stream_producer is not None
         while True:
             item = publish_queue.get()
@@ -518,7 +522,11 @@ def main() -> int:
                 if item is publisher_stop:
                     return
                 request, entry = item
+                # 이 시각은 "callback에서 enqueue된 뒤 publisher thread가 실제로 잡은 시각"이다.
+                # publish_enqueued_to_publisher_dequeued_ms 계산에 사용된다.
                 request["producer_metrics"]["publisher_dequeued_wall_ns"] = time.time_ns()
+                # RedisStreamProducer.publish() 내부에서 실제 Redis Stream XADD가 수행된다.
+                # 이 호출을 callback 밖으로 빼는 것이 이번 latency 개선의 핵심이다.
                 stream_id = stream_producer.publish(request)
                 with stats_lock:
                     stats["published"] += 1
@@ -542,6 +550,8 @@ def main() -> int:
                     stats["publish_errors"] += 1
                 if item is not publisher_stop:
                     _request, entry = item
+                    # Redis publish가 실패하면 pending 상태로 둔 flow를 다시 default로 돌려
+                    # 이후 재시도/재처리가 가능하게 한다.
                     online_cache.flow_cache.set_status(entry, "default")
                 print(f"[redis] stream publish failed: {exc}", file=sys.stderr)
             finally:
@@ -556,8 +566,9 @@ def main() -> int:
         3) 패킷 방향(src/dst) 집계
         4) TrafficGenerator 메타데이터 파싱
         5) online_cache에 이벤트를 전달하여 flow 매칭/ready 상태 판단
-        6) ready한 flow는 로그 출력 및 (옵션) Redis Stream에 publish
-        7) 오류는 stderr에 기록하고 통계를 갱신
+        6) ready한 flow는 request를 만들고 publish_queue에 enqueue
+        7) Redis Stream publish는 별도 publisher_loop thread에서 수행
+        8) 오류는 stderr에 기록하고 통계를 갱신
         """
         nonlocal frame_number
         frame_number += 1
@@ -633,6 +644,9 @@ def main() -> int:
                             "request_built_wall_ns": request_built_wall_ns,
                         }
                     )
+                    # 여기서 Redis publish를 직접 하지 않는다.
+                    # callback은 enqueue까지만 수행하고 바로 반환해야 다음 perf event를 빠르게 처리할 수 있다.
+                    # 실제 Redis XADD는 publisher_loop()가 Queue에서 꺼내 처리한다.
                     request["producer_metrics"]["publish_enqueue_start_wall_ns"] = time.time_ns()
                     request["producer_metrics"]["publish_enqueued_wall_ns"] = time.time_ns()
                     publish_queue.put((request, entry))
@@ -655,6 +669,8 @@ def main() -> int:
     )
     if stream_producer is not None:
         stream_producer.connect()
+        # Redis publish 전용 thread를 먼저 띄운 뒤 perf buffer callback을 계속 poll한다.
+        # daemon=True지만 finally에서 stop sentinel을 넣고 짧게 join한다.
         publisher_thread = threading.Thread(
             target=publisher_loop,
             name="redis-stream-publisher",
