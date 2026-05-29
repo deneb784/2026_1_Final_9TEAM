@@ -98,6 +98,41 @@ request_built_to_worker_received_ms
 
 FB workload는 short flow가 많기 때문에 same-flow FCT-before 조건은 매우 빡세다. 따라서 FB 결과는 파이프라인의 한계 분석에는 유용하지만, elephant/long-tailed flow 조기 분류 목적을 보여주는 대표 결과로는 VL2가 더 적합하다.
 
+### FB 재실험 해석
+
+최종 worker 조건(`--read-count 8`, `--quiet-results`, idle timeout 없음)으로 FB를 다시 실행해도 전체 지연은 여전히 VL2보다 크게 나타났다.
+
+최신 FB 재실험 예:
+
+```text
+ready_to_cache_updated_ms                 p50 ~= 17.5 ms
+request_built_to_worker_received_ms       p50 ~= 16.8 ms
+redis_publish_start_to_worker_received_ms p50 ~= 16.4 ms
+inference_ms                              p50 ~= 0.44 ms
+```
+
+반면 XDP producer 쪽은 여전히 매우 작았다.
+
+```text
+ready_to_request_built_ms              p50 ~= 0.011 ms
+request_built_to_publish_enqueued_ms   p50 ~= 0.001 ms
+process_event_duration_ms              p50 ~= 0.006 ms
+```
+
+따라서 FB에서 남는 지연은 XDP 처리나 모델 추론 때문이 아니라, Redis Stream에 넣은 request를 Python worker가 실제로 받아오기까지의 전달 구간에서 발생한 것으로 해석할 수 있다.
+
+FB에서 이 구간이 크게 나오는 가장 가능성 높은 이유는 short-flow burst 특성이다.
+
+```text
+작은 flow가 짧은 시간에 많이 완료됨
+  -> feature-ready request가 한꺼번에 몰림
+  -> worker는 Redis Stream에서 request를 순차적으로 받아 처리
+  -> 뒤쪽 request는 worker가 받아오기 전까지 대기
+  -> redis_publish_start_to_worker_received_ms 증가
+```
+
+즉 FB는 flow 자체가 빨리 끝나고 request가 burst로 몰리기 쉬워, 현재 Python+Redis 기반 전달 계층의 지연이 flow completion 전에 들어가기 어렵다. 이는 XDP packet 처리의 한계라기보다 prototype transport 계층의 한계로 보는 것이 맞다.
+
 ## 개선 후 VL2 결과
 
 VL2 50-flow 실험에서는 전체 온라인 loop가 ms 단위로 동작했다.
