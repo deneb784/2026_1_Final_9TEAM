@@ -210,9 +210,9 @@ class StepGruStreamWorker:
         stream_fields: dict[str, str],
         worker_received_wall_ns: int,
     ) -> dict:
-        flow_key = request.get("online_flow_key") or request.get("request_key")
+        flow_key = request.get("online_flow_key")
         if not flow_key:
-            raise ValueError("request must contain online_flow_key or request_key")
+            raise ValueError("request must contain online_flow_key")
         direction_name = flow_key["direction"]
         seq_len = int(request.get("seq_len", len(request["x"])))
 
@@ -235,7 +235,6 @@ class StepGruStreamWorker:
         redis_publish_start_wall_ns = stream_fields.get("publish_start_wall_ns")
         response = {
             "online_flow_key": request.get("online_flow_key"),
-            "request_key": request.get("request_key"),
             "logical_flow_id": request.get("logical_flow_id"),
             "run_id": request.get("run_id"),
             "stream_id": stream_id,

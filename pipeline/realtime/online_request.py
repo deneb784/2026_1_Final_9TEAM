@@ -17,7 +17,7 @@ def build_online_flow_request(
     Redis Stream은 "나중에 소비자가 읽어 갈 수 있는 append-only 로그/큐"에 가깝기 때문에,
     worker가 재시도하거나 지연해서 읽더라도 필요한 식별자와 feature를 모두 담아 보내야 한다.
     """
-    # FlowEntry에 쌓인 패킷을 학습/추론 때 쓰는 feature 행렬 형태로 변환한다.
+    # OnlineFlowEntry에 쌓인 패킷을 학습/추론 때 쓰는 feature 행렬 형태로 변환한다.
     # build_x_from_entry는 tcp_len > 0인 payload 패킷만 feature로 사용하고,
     # packet_count보다 적으면 padding을 채워 모델 입력 shape를 고정한다.
     x, seq_len = build_x_from_entry(entry, packet_count=packet_count)
@@ -33,18 +33,11 @@ def build_online_flow_request(
         first_packet_ts_us = getattr(feature_packets[0], "epoch_ts_us", feature_packets[0].ts_us)
         last_packet_ts_us = getattr(feature_packets[-1], "epoch_ts_us", feature_packets[-1].ts_us)
 
-    request_key = getattr(entry, "request_key", None)
-    if request_key is None and hasattr(entry, "src_index"):
-        request_key = {
-            "src_index": entry.src_index,
-            "flow_id": entry.flow_id,
-            "direction": entry.direction,
-        }
-
     online_flow_key = getattr(entry, "online_flow_key", None)
+    if online_flow_key is None:
+        raise ValueError("online flow request requires online_flow_key")
 
     # online_flow_key는 실시간 cache가 결과를 되붙일 때 쓰는 식별자다.
-    # request_key는 기존 offline metric join과 호환하기 위한 보조 식별자다.
     # logical_flow_id는 사람이 로그/CSV를 볼 때 읽기 쉬운 문자열 ID이고,
     # x/seq_len/feature_names는 모델 worker가 바로 추론할 수 있는 feature 본문이다.
     request = {
@@ -65,10 +58,7 @@ def build_online_flow_request(
             "feature_packet_count_observed": len(feature_packets),
         },
     }
-    if online_flow_key is not None:
-        request["online_flow_key"] = dict(online_flow_key)
-    if request_key is not None:
-        request["request_key"] = dict(request_key)
+    request["online_flow_key"] = dict(online_flow_key)
     if run_id is not None:
         # run_id는 여러 실험이 같은 Redis를 공유할 때 결과와 지연 로그를 실험 단위로 묶기 위한 값이다.
         request["run_id"] = run_id

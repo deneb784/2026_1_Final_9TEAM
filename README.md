@@ -285,7 +285,7 @@ redis-cli -s /tmp/capstone-redis.sock --raw XREVRANGE flow_features + - COUNT 1
 runs/step_gru/*.jsonl
 ```
 
-각 줄에는 `online_flow_key`, metric join용 `request_key`, `run_id`, `logical_flow_id`, `inference_ms`, `score`, `predicted_label`, `threshold`, `exit_step`가 저장됩니다.
+각 줄에는 `online_flow_key`, `run_id`, `logical_flow_id`, `inference_ms`, `score`, `predicted_label`, `threshold`, `exit_step`, end-to-end latency 필드가 저장됩니다.
 
 ## 결과 요약 명령
 
@@ -333,31 +333,6 @@ python3 analyze/online_e2e_latency.py \
 - `worker_received_to_done_ms`: worker 수신부터 모델 추론 완료까지
 - `pubsub_publish_to_subscriber_ms`: worker가 Pub/Sub publish를 시작한 뒤 subscriber가 받은 시간
 - `subscriber_to_cache_updated_ms`: subscriber 수신부터 FlowCache 반영 완료까지
-
-## 온라인 결과 후처리 metric
-
-온라인 worker의 JSONL은 flow별 예측만 저장합니다. `recall`, `precision`, `f1`은 실험이 끝난 뒤 정답 source와 join해서 계산합니다.
-
-Mininet 결과 metadata를 정답으로 쓰는 예:
-
-```bash
-python3 analyze/online_result_metrics.py \
-  --result-log runs/step_gru/fb_threshold08_online_results.jsonl \
-  --run-id fb_seq3_th08_100 \
-  --meta-dir runs/mininet_fb_seq3_th08_100/results \
-  --metrics-out runs/step_gru/fb_threshold08_metrics.jsonl
-```
-
-Dataset JSONL의 `label`을 정답으로 쓰는 예:
-
-```bash
-python3 analyze/online_result_metrics.py \
-  --result-log runs/step_gru/vl2_online_results.jsonl \
-  --truth-jsonl dataset/elephant_dst_to_src/vl2/seq10/test.jsonl \
-  --metrics-out runs/step_gru/vl2_metrics.jsonl
-```
-
-예측 threshold는 결과 JSONL의 `threshold`에서 자동으로 읽습니다. `label`이 CDF 값이면 `--label-threshold` 이상을 elephant로 봅니다. 생략하면 예측 threshold와 같은 값을 사용합니다. byte 기준 정답을 고정하려면 `--size-threshold-bytes`를 지정합니다.
 
 ## 테스트
 

@@ -52,7 +52,6 @@ class OnlineFlowEntry:
     """실시간 online flow별 packet buffer와 classifier 상태."""
 
     key: OnlineFlowKey
-    request_key: dict[str, Any] | None = None
     packets: list[PacketRecord] = field(default_factory=list)
     payload_bytes: int = 0
     status: str = "default"
@@ -69,12 +68,6 @@ class OnlineFlowEntry:
 
     @property
     def logical_flow_id(self) -> str:
-        if self.request_key is not None:
-            return (
-                f"{self.request_key['src_index']}:"
-                f"{self.request_key['flow_id']}:"
-                f"{self.request_key['direction']}"
-            )
         return self.key.logical_flow_id
 
     @property
@@ -93,38 +86,20 @@ class RealtimeFlowCache:
     def __init__(self, feature_packet_count: int):
         self.feature_packet_count = feature_packet_count
         self.entries: dict[OnlineFlowKey, OnlineFlowEntry] = {}
-        self._request_key_index: dict[tuple[int, int, str], OnlineFlowKey] = {}
 
-    def _request_key_tuple(self, request_key: dict[str, Any]) -> tuple[int, int, str]:
-        return (
-            int(request_key["src_index"]),
-            int(request_key["flow_id"]),
-            str(request_key["direction"]),
-        )
-
-    def get_or_create_entry(
-        self,
-        key: OnlineFlowKey,
-        request_key: dict[str, Any] | None = None,
-    ) -> OnlineFlowEntry:
+    def get_or_create_entry(self, key: OnlineFlowKey) -> OnlineFlowEntry:
         entry = self.entries.get(key)
         if entry is None:
-            entry = OnlineFlowEntry(key=key, request_key=dict(request_key) if request_key else None)
+            entry = OnlineFlowEntry(key=key)
             self.entries[key] = entry
-        elif entry.request_key is None and request_key is not None:
-            entry.request_key = dict(request_key)
-
-        if entry.request_key is not None:
-            self._request_key_index[self._request_key_tuple(entry.request_key)] = key
         return entry
 
     def add_packet(
         self,
         key: OnlineFlowKey,
         pkt: PacketRecord,
-        request_key: dict[str, Any] | None = None,
     ) -> OnlineFlowEntry:
-        entry = self.get_or_create_entry(key, request_key=request_key)
+        entry = self.get_or_create_entry(key)
 
         if entry.status != "default":
             return entry
@@ -154,15 +129,9 @@ class RealtimeFlowCache:
 
     def apply_classification_result(self, result: dict[str, Any]) -> OnlineFlowEntry | None:
         online_flow_key = result.get("online_flow_key")
-        entry = None
-        if online_flow_key:
-            entry = self.entries.get(OnlineFlowKey.from_mapping(online_flow_key))
-        elif result.get("request_key"):
-            # 구버전 payload 호환용 fallback. 새 실시간 경로는 online_flow_key를 사용한다.
-            key = self._request_key_index.get(self._request_key_tuple(result["request_key"]))
-            if key is not None:
-                entry = self.entries.get(key)
-
+        if not online_flow_key:
+            return None
+        entry = self.entries.get(OnlineFlowKey.from_mapping(online_flow_key))
         if entry is None:
             return None
 

@@ -30,12 +30,15 @@ class RedisStreamProducerTest(unittest.TestCase):
 
         stream_id = producer.publish(
             {
-                "request_key": {
-                    "src_index": 0,
+                "online_flow_key": {
+                    "client_ip": "10.0.0.1",
+                    "client_port": 40000,
+                    "server_ip": "10.2.0.1",
+                    "server_port": 5001,
                     "flow_id": 7,
                     "direction": "dst_to_src",
                 },
-                "logical_flow_id": "0:7:dst_to_src",
+                "logical_flow_id": "10.0.0.1:40000->10.2.0.1:5001:7:dst_to_src",
                 "run_id": "unit",
                 "payload": [],
                 "producer_metrics": {
@@ -58,6 +61,8 @@ class RedisStreamProducerTest(unittest.TestCase):
         self.assertEqual(fields["feature_ready_wall_ns"], "123")
         self.assertEqual(fields["first_packet_ts_us"], "1000")
         self.assertEqual(fields["last_packet_ts_us"], "2000")
+        self.assertIn("online_flow_key", fields)
+        self.assertNotIn("request_key", fields)
         self.assertIn("publish_start_wall_ns", fields)
 
         # 두 번째 XADD는 지연 분석용 보조 Stream entry다.

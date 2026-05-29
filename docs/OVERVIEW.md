@@ -669,11 +669,11 @@ csv_results/
 
 ```json
 {
-  "request_key": {
+  "flow_key": {
     "src_index": 0,
-    "flow_id": 19
+    "flow_id": 19,
+    "direction": "src_to_dst"
   },
-  "direction": "src_to_dst",
   "logical_flow_id": "0:19:src_to_dst",
   "meta": {
     "src_ip": "10.0.0.1",
@@ -784,8 +784,7 @@ xdp/tg_xdp_capture.py
       ↓
 pipeline/realtime/online_tg_flow_cache.py
   └─ payload metadata에서 flow_id, direction 복원
-  └─ client/server 5-tuple + flow_id로 RealtimeFlowCache에 packet feature 누적
-  └─ src_index 기반 request_key는 metric join용 보조 값으로만 유지
+  └─ client/server IP:port + flow_id + direction으로 RealtimeFlowCache에 packet feature 누적
   └─ feature_packet_count 도달 시 ready entry 생성
       ↓
 pipeline/realtime/online_request.py

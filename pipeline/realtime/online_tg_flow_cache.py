@@ -103,7 +103,6 @@ class _DirectionalFlowState:
     # online_key는 실시간 FlowCache entry를 만들 때 필요한 논리 flow 식별 정보이고,
     # remaining_tcp_payload_bytes는 metadata+payload를 얼마나 더 소비해야 이 flow가 끝나는지 나타낸다.
     online_key: OnlineFlowKey
-    request_key: dict | None
     remaining_tcp_payload_bytes: int
 
 
@@ -135,29 +134,6 @@ def parse_tg_metadata(payload_prefix: bytes) -> TrafficGeneratorMetadata | None:
     )
 
 
-def build_default_src_index_by_ip(
-    k: int = 4,
-    src_pods: tuple[int, ...] = (0, 1),
-) -> dict[str, int]:
-    """기본 fat-tree에서 flowGenerator가 srcHosts를 나열하는 순서를 재현한다.
-
-    실시간 cache key에는 src_index를 쓰지 않는다. 이 매핑은 online 결과를
-    offline meta/dataset과 join해 metric을 계산하기 위한 request_key를 붙일 때만 사용한다.
-    """
-    # src_index는 dataset/label 쪽에서 쓰는 송신 host 번호다.
-    # 온라인 XDP 이벤트에는 IP만 있으므로, metric 호환이 필요할 때 IP로부터 보조 key를 만든다.
-    index_by_ip: dict[str, int] = {}
-    index = 0
-    for pod in range(k):
-        for edge in range(k // 2):
-            for host in range(1, k // 2 + 1):
-                ip = f"10.{pod}.{edge}.{host}"
-                if pod in src_pods:
-                    index_by_ip[ip] = index
-                    index += 1
-    return index_by_ip
-
-
 class TrafficGeneratorOnlineFlowCache:
     """XDP packet event를 TrafficGenerator 요청 단위 FlowCache entry로 변환한다.
 
@@ -172,11 +148,9 @@ class TrafficGeneratorOnlineFlowCache:
     def __init__(
         self,
         feature_packet_count: int,
-        src_index_by_ip: dict[str, int] | None = None,
         server_port: int = 5001,
     ):
         self.flow_cache = RealtimeFlowCache(feature_packet_count=feature_packet_count)
-        self.src_index_by_ip = src_index_by_ip
         self.server_port = server_port
         # key는 "client/server 4-tuple + 방향"이다. 같은 TCP connection에서도 양방향 요청/응답이
         # 별도 flow로 처리되므로 direction까지 포함한다.
@@ -208,13 +182,12 @@ class TrafficGeneratorOnlineFlowCache:
             return None
 
         # 실시간 FlowCache는 5-tuple을 client/server 기준으로 정규화한 online flow key로
-        # PacketRecord를 모은다. src_index 기반 request_key는 metric 호환용 보조 값일 뿐이다.
+        # PacketRecord를 모은다.
         # feature_packet_count만큼 payload 패킷이 쌓이면 ready 상태로 간주된다.
         packet = self._event_to_packet_record(event)
         entry = self.flow_cache.add_packet(
             state.online_key,
             packet,
-            request_key=state.request_key,
         )
 
         state.remaining_tcp_payload_bytes -= event.tcp_len
@@ -302,19 +275,8 @@ class TrafficGeneratorOnlineFlowCache:
             flow_id=tg_meta.flow_id,
             direction=direction,
         )
-        request_key = None
-        if self.src_index_by_ip is not None:
-            src_index = self.src_index_by_ip.get(client_ip)
-            if src_index is not None:
-                request_key = {
-                    "src_index": src_index,
-                    "flow_id": tg_meta.flow_id,
-                    "direction": direction,
-                }
-
         return _DirectionalFlowState(
             online_key=online_key,
-            request_key=request_key,
             remaining_tcp_payload_bytes=total_payload_bytes,
         )
 

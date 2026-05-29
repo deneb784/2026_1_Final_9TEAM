@@ -19,7 +19,6 @@ from pipeline.realtime.online_tg_flow_cache import (
     parse_tg_metadata,
     TrafficGeneratorOnlineFlowCache,
     XdpPacketEvent,
-    build_default_src_index_by_ip,
 )
 from pipeline.realtime.online_request import build_online_flow_request
 from pipeline.redis.result_subscriber import RedisResultSubscriber
@@ -361,7 +360,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--xdp-mode", choices=sorted(XDP_FLAGS), default="skb")
     parser.add_argument("--feature-packet-count", type=int, default=10)
     parser.add_argument("--server-port", type=int, default=5001)
-    parser.add_argument("--k", type=int, default=4)
     parser.add_argument(
         "--print-ready",
         action="store_true",
@@ -394,10 +392,8 @@ def main() -> int:
         socket.if_nametoindex(ifname): ifname
         for ifname in interfaces
     }
-    src_index_by_ip = build_default_src_index_by_ip(k=args.k)
     online_cache = TrafficGeneratorOnlineFlowCache(
         feature_packet_count=args.feature_packet_count,
-        src_index_by_ip=src_index_by_ip,
         server_port=args.server_port,
     )
     # bpf_ktime_get_ns()는 monotonic 계열 timestamp다. Redis/분석은 epoch wall-clock을
@@ -447,13 +443,16 @@ def main() -> int:
         with stats_lock:
             stats["classified"] += 1
         if args.print_ready:
-            request_key = updated.request_key or {}
+            key = updated.key
             print(
-                "[classified] src_index=%s flow_id=%s direction=%s label=%s score=%.4f e2e_ms=%s"
+                "[classified] client=%s:%s server=%s:%s flow_id=%s direction=%s label=%s score=%.4f e2e_ms=%s"
                 % (
-                    request_key.get("src_index", "n/a"),
-                    updated.flow_id,
-                    updated.direction,
+                    key.client_ip,
+                    key.client_port,
+                    key.server_ip,
+                    key.server_port,
+                    key.flow_id,
+                    key.direction,
                     updated.status,
                     updated.model_score if updated.model_score is not None else -1.0,
                     (
@@ -513,13 +512,16 @@ def main() -> int:
             stats["ready"] += 1
             if args.print_ready:
                 tcp_lens = [pkt.tcp_len for pkt in entry.packets]
-                request_key = entry.request_key or {}
+                key = entry.key
                 print(
-                    "[ready] src_index=%s flow_id=%s direction=%s packets=%s payload_bytes=%s tcp_lens=%s"
+                    "[ready] client=%s:%s server=%s:%s flow_id=%s direction=%s packets=%s payload_bytes=%s tcp_lens=%s"
                     % (
-                        request_key.get("src_index", "n/a"),
-                        entry.flow_id,
-                        entry.direction,
+                        key.client_ip,
+                        key.client_port,
+                        key.server_ip,
+                        key.server_port,
+                        key.flow_id,
+                        key.direction,
                         len(entry.packets),
                         entry.payload_bytes,
                         tcp_lens,
@@ -539,15 +541,18 @@ def main() -> int:
                     stream_id = stream_producer.publish(request)
                     stats["published"] += 1
                     if args.print_ready:
-                        request_key = entry.request_key or {}
+                        key = entry.key
                         print(
-                            "[stream] id=%s stream=%s src_index=%s flow_id=%s direction=%s"
+                            "[stream] id=%s stream=%s client=%s:%s server=%s:%s flow_id=%s direction=%s"
                             % (
                                 stream_id,
                                 args.redis_stream,
-                                request_key.get("src_index", "n/a"),
-                                entry.flow_id,
-                                entry.direction,
+                                key.client_ip,
+                                key.client_port,
+                                key.server_ip,
+                                key.server_port,
+                                key.flow_id,
+                                key.direction,
                             )
                         )
                 except Exception as exc:

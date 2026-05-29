@@ -161,7 +161,7 @@ def make_sample(stream_id: str, fields: dict[str, str]) -> LatencySample:
       가 유효하면 이를 기준으로 여러 지연을 계산한다.
     """
     payload = load_payload(fields)
-    request_key = payload.get("request_key") or payload.get("online_flow_key") or {}
+    online_flow_key = payload.get("online_flow_key") or {}
     redis_arrival_ns = parse_stream_id_ns(stream_id)
 
     # producer가 보낸 wall-clock ns 값들(문자열) 혹은 payload 내부 metric
@@ -203,7 +203,7 @@ def make_sample(stream_id: str, fields: dict[str, str]) -> LatencySample:
         capture_mode=fields.get("capture_mode")
         or (payload.get("producer_metrics") or {}).get("capture_mode"),
         logical_flow_id=fields.get("logical_flow_id") or payload.get("logical_flow_id"),
-        direction=request_key.get("direction"),
+        direction=online_flow_key.get("direction"),
         # ready(ts) -> redis(id) 차이 (ms): Redis ID 기준 참고용
         ready_to_redis_id_ms=(redis_arrival_ns - ready_ns) / 1_000_000 if ready_ns is not None else None,
         # publish_start (producer wall-clock) -> redis(id) 차이 (ms)

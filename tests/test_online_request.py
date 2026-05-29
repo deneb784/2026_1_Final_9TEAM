@@ -2,11 +2,11 @@ import unittest
 
 from pipeline.realtime.online_request import build_online_flow_request
 from pipeline.realtime.online_flow_cache import OnlineFlowEntry, OnlineFlowKey
-from pipeline.models import FlowEntry, PacketRecord
+from pipeline.models import PacketRecord
 
 
 def packet(frame_number: int, ts_us: int, tcp_len: int) -> PacketRecord:
-    # build_online_flow_request는 FlowEntry 안의 PacketRecord를 dataset feature로 변환한다.
+    # build_online_flow_request는 OnlineFlowEntry 안의 PacketRecord를 dataset feature로 변환한다.
     # 테스트에서는 pcap을 읽지 않고 필요한 필드만 채운 PacketRecord를 직접 만든다.
     return PacketRecord(
         source_file="h1-eth0",
@@ -43,16 +43,24 @@ def packet(frame_number: int, ts_us: int, tcp_len: int) -> PacketRecord:
     )
 
 
+def online_entry(flow_id: int = 7, direction: str = "dst_to_src") -> OnlineFlowEntry:
+    return OnlineFlowEntry(
+        key=OnlineFlowKey(
+            client_ip="10.0.0.1",
+            client_port=40000,
+            server_ip="10.2.0.1",
+            server_port=5001,
+            flow_id=flow_id,
+            direction=direction,
+        )
+    )
+
+
 class OnlineRequestTest(unittest.TestCase):
     def test_build_online_flow_request_uses_dataset_feature_shape(self):
         # Redis Stream에 실을 request payload가 모델 worker가 기대하는 feature shape를 갖는지 확인한다.
         # ACK-only 패킷(tcp_len=0)은 입력 feature에서 제외되고, payload 패킷만 seq_len에 반영된다.
-        entry = FlowEntry(
-            src_index=0,
-            flow_id=7,
-            direction="dst_to_src",
-            logical_flow_id="0:7:dst_to_src",
-        )
+        entry = online_entry()
         entry.packets.extend([
             packet(frame_number=1, ts_us=1_000, tcp_len=0),
             packet(frame_number=2, ts_us=1_010, tcp_len=1448),
@@ -61,12 +69,12 @@ class OnlineRequestTest(unittest.TestCase):
 
         request = build_online_flow_request(entry, packet_count=3, run_id="unit")
 
-        self.assertEqual(request["request_key"], {
-            "src_index": 0,
-            "flow_id": 7,
-            "direction": "dst_to_src",
-        })
-        self.assertEqual(request["logical_flow_id"], "0:7:dst_to_src")
+        self.assertEqual(request["online_flow_key"], entry.online_flow_key)
+        self.assertNotIn("request_key", request)
+        self.assertEqual(
+            request["logical_flow_id"],
+            "10.0.0.1:40000->10.2.0.1:5001:7:dst_to_src",
+        )
         self.assertEqual(request["seq_len"], 1)
         self.assertEqual(len(request["x"]), 3)
         self.assertEqual(len(request["x"][0]), 18)
@@ -84,12 +92,7 @@ class OnlineRequestTest(unittest.TestCase):
     def test_build_online_flow_request_accepts_latency_metadata(self):
         # transport.py는 producer_metrics 일부를 Stream field로 복사한다.
         # 여기서는 capture_mode와 feature_ready_wall_ns가 request에 보존되는지 확인한다.
-        entry = FlowEntry(
-            src_index=0,
-            flow_id=7,
-            direction="dst_to_src",
-            logical_flow_id="0:7:dst_to_src",
-        )
+        entry = online_entry()
         entry.packets.append(packet(frame_number=1, ts_us=1_000, tcp_len=1448))
         entry.payload_bytes = 1448
 
@@ -107,12 +110,7 @@ class OnlineRequestTest(unittest.TestCase):
     def test_build_online_flow_request_prefers_packet_epoch_timestamp(self):
         # XDP 온라인 경로는 wall-clock epoch timestamp를 줄 수 있다.
         # latency 계산에는 상대 ts_us보다 epoch_ts_us가 더 직접적이므로 우선 사용한다.
-        entry = FlowEntry(
-            src_index=0,
-            flow_id=7,
-            direction="dst_to_src",
-            logical_flow_id="0:7:dst_to_src",
-        )
+        entry = online_entry()
         pkt = packet(frame_number=1, ts_us=1_000, tcp_len=1448)
         pkt.epoch_ts_us = 1_700_000_000_000_000
         entry.packets.append(pkt)
@@ -128,7 +126,7 @@ class OnlineRequestTest(unittest.TestCase):
             1_700_000_000_000_000,
         )
 
-    def test_build_online_flow_request_keeps_online_and_metric_keys(self):
+    def test_build_online_flow_request_keeps_online_flow_key(self):
         key = OnlineFlowKey(
             client_ip="10.0.0.1",
             client_port=40000,
@@ -137,25 +135,14 @@ class OnlineRequestTest(unittest.TestCase):
             flow_id=7,
             direction="dst_to_src",
         )
-        entry = OnlineFlowEntry(
-            key=key,
-            request_key={
-                "src_index": 0,
-                "flow_id": 7,
-                "direction": "dst_to_src",
-            },
-        )
+        entry = OnlineFlowEntry(key=key)
         entry.packets.append(packet(frame_number=1, ts_us=1_000, tcp_len=1448))
         entry.payload_bytes = 1448
 
         request = build_online_flow_request(entry, packet_count=3)
 
         self.assertEqual(request["online_flow_key"], key.as_dict())
-        self.assertEqual(request["request_key"], {
-            "src_index": 0,
-            "flow_id": 7,
-            "direction": "dst_to_src",
-        })
+        self.assertNotIn("request_key", request)
 
 
 if __name__ == "__main__":

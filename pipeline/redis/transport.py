@@ -53,8 +53,6 @@ class RedisStreamProducer:
         }
         if request.get("online_flow_key") is not None:
             fields["online_flow_key"] = json.dumps(request["online_flow_key"], ensure_ascii=False)
-        if request.get("request_key") is not None:
-            fields["request_key"] = json.dumps(request["request_key"], ensure_ascii=False)
         if request.get("run_id") is not None:
             fields["run_id"] = str(request["run_id"])
         if metrics.get("capture_mode") is not None:

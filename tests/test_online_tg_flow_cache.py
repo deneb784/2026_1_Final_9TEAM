@@ -87,7 +87,6 @@ class TrafficGeneratorOnlineFlowCacheTest(unittest.TestCase):
     def test_persistent_connection_dst_to_src_flows_are_separated_by_tg_metadata(self):
         cache = TrafficGeneratorOnlineFlowCache(
             feature_packet_count=2,
-            src_index_by_ip={"10.0.0.1": 0},
         )
 
         # 같은 TCP connection에서 첫 번째 TrafficGenerator 응답 flow가 시작된다.
@@ -148,7 +147,6 @@ class TrafficGeneratorOnlineFlowCacheTest(unittest.TestCase):
         # client -> server 방향 payload에 TG metadata가 있으면 src_to_dst entry가 만들어져야 한다.
         cache = TrafficGeneratorOnlineFlowCache(
             feature_packet_count=1,
-            src_index_by_ip={"10.0.0.1": 0},
         )
 
         cache.process_event(
@@ -165,12 +163,11 @@ class TrafficGeneratorOnlineFlowCacheTest(unittest.TestCase):
         )
 
         entry = cache.flow_cache.entries[flow_key(3, "src_to_dst")]
-        self.assertEqual(entry.logical_flow_id, "0:3:src_to_dst")
-        self.assertEqual(entry.request_key, {
-            "src_index": 0,
-            "flow_id": 3,
-            "direction": "src_to_dst",
-        })
+        self.assertEqual(
+            entry.logical_flow_id,
+            "10.0.0.1:40000->10.2.0.1:5001:3:src_to_dst",
+        )
+        self.assertEqual(entry.online_flow_key, flow_key(3, "src_to_dst").as_dict())
         self.assertEqual(entry.payload_bytes, 20)
         self.assertEqual(entry.status, "default")
         self.assertTrue(cache.flow_cache.is_ready(entry))
@@ -180,7 +177,6 @@ class TrafficGeneratorOnlineFlowCacheTest(unittest.TestCase):
         # pending 상태는 같은 flow를 중복 publish하지 않기 위한 잠금 역할을 한다.
         cache = TrafficGeneratorOnlineFlowCache(
             feature_packet_count=1,
-            src_index_by_ip={"10.0.0.1": 0},
         )
 
         cache.process_event(
@@ -210,7 +206,6 @@ class TrafficGeneratorOnlineFlowCacheTest(unittest.TestCase):
         # worker가 받은 request payload와 cache 내부 상태가 달라질 수 있다.
         cache = TrafficGeneratorOnlineFlowCache(
             feature_packet_count=1,
-            src_index_by_ip={"10.0.0.1": 0},
         )
 
         cache.process_event(
@@ -250,7 +245,6 @@ class TrafficGeneratorOnlineFlowCacheTest(unittest.TestCase):
         # active flow 안에 있어도 payload_bytes와 packets에 추가되지 않아야 한다.
         cache = TrafficGeneratorOnlineFlowCache(
             feature_packet_count=2,
-            src_index_by_ip={"10.0.0.1": 0},
         )
 
         cache.process_event(
@@ -288,7 +282,6 @@ class TrafficGeneratorOnlineFlowCacheTest(unittest.TestCase):
         # 아직 dst_to_src metadata를 못 봤다면 응답 flow_id를 알 수 없으므로 그 ACK는 버린다.
         cache = TrafficGeneratorOnlineFlowCache(
             feature_packet_count=2,
-            src_index_by_ip={"10.0.0.1": 0},
         )
 
         cache.process_event(
@@ -335,7 +328,6 @@ class TrafficGeneratorOnlineFlowCacheTest(unittest.TestCase):
     def test_classification_result_uses_online_flow_key(self):
         cache = TrafficGeneratorOnlineFlowCache(
             feature_packet_count=1,
-            src_index_by_ip={"10.0.0.1": 0},
         )
         entry = cache.process_event(
             event(
@@ -355,11 +347,6 @@ class TrafficGeneratorOnlineFlowCacheTest(unittest.TestCase):
         updated = cache.apply_classification_result(
             {
                 "online_flow_key": entry.online_flow_key,
-                "request_key": {
-                    "src_index": 999,
-                    "flow_id": 9,
-                    "direction": "dst_to_src",
-                },
                 "predicted_label": "elephant",
                 "score": 0.9,
             }
