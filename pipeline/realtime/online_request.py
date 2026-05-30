@@ -28,7 +28,7 @@ def build_online_flow_request(
     first_packet_ts_us = None
     last_packet_ts_us = None
     if feature_packets:
-        # XDP 온라인 경로에서는 epoch_ts_us가 들어올 수 있고, pcap/offline 경로에서는
+        # 온라인 캡처 경로에서는 epoch_ts_us가 들어올 수 있고, pcap/offline 경로에서는
         # 상대 timestamp인 ts_us만 있을 수 있다. 가능한 경우 epoch 기준 시간을 우선 사용한다.
         first_packet_ts_us = getattr(feature_packets[0], "epoch_ts_us", feature_packets[0].ts_us)
         last_packet_ts_us = getattr(feature_packets[-1], "epoch_ts_us", feature_packets[-1].ts_us)
@@ -46,7 +46,7 @@ def build_online_flow_request(
         "x": x,
         "seq_len": seq_len,
         "max_packet_count": packet_count,
-        "observed_directional_payload_bytes": entry.payload_bytes,
+        "observed_directional_payload_bytes": entry.cumulative_payload_bytes,
         # producer_metrics는 추론 내용이 아니라 관측/전송 지연을 재기 위한 메타데이터다.
         # Redis Stream에 올릴 때 transport.py가 일부 값을 별도 field로 복사해서
         # 스트림 조회만으로도 latency 분석을 쉽게 할 수 있게 한다.

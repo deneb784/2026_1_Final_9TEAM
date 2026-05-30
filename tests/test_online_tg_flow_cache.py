@@ -5,7 +5,7 @@ from pipeline.realtime.online_tg_flow_cache import (
     TG_FLOW_DIR_DST_TO_SRC,
     TG_FLOW_DIR_SRC_TO_DST,
     TrafficGeneratorOnlineFlowCache,
-    XdpPacketEvent,
+    OnlinePacketEvent,
     parse_tg_metadata,
 )
 from pipeline.realtime.online_flow_cache import OnlineFlowKey
@@ -29,13 +29,13 @@ def event(
     payload_prefix: bytes = b"",
     seq: int = 1,
     tcp_flags: int | None = None,
-) -> XdpPacketEvent:
-    # 테스트용 XDP 이벤트 생성 헬퍼.
+) -> OnlinePacketEvent:
+    # 테스트용 온라인 패킷 이벤트 생성 헬퍼.
     # tcp_len이 있으면 PSH+ACK(0x18), payload가 없으면 ACK-only(0x10)로 기본 플래그를 맞춘다.
     if tcp_flags is None:
         tcp_flags = 0x18 if tcp_len else 0x10
 
-    return XdpPacketEvent(
+    return OnlinePacketEvent(
         ts_us=ts_us,
         epoch_ts_us=None,
         frame_number=frame_number,
@@ -61,13 +61,20 @@ def event(
 
 
 def flow_key(flow_id: int, direction: str = "dst_to_src") -> OnlineFlowKey:
+    if direction == "src_to_dst":
+        return OnlineFlowKey(
+            src_ip="10.0.0.1",
+            src_port=40000,
+            dst_ip="10.2.0.1",
+            dst_port=5001,
+            flow_id=flow_id,
+        )
     return OnlineFlowKey(
-        client_ip="10.0.0.1",
-        client_port=40000,
-        server_ip="10.2.0.1",
-        server_port=5001,
+        src_ip="10.2.0.1",
+        src_port=5001,
+        dst_ip="10.0.0.1",
+        dst_port=40000,
         flow_id=flow_id,
-        direction=direction,
     )
 
 
@@ -167,9 +174,39 @@ class TrafficGeneratorOnlineFlowCacheTest(unittest.TestCase):
             entry.logical_flow_id,
             "10.0.0.1:40000->10.2.0.1:5001:3:src_to_dst",
         )
-        self.assertEqual(entry.online_flow_key, flow_key(3, "src_to_dst").as_dict())
-        self.assertEqual(entry.payload_bytes, 20)
+        self.assertEqual(entry.online_flow_key, {**flow_key(3, "src_to_dst").as_dict(), "direction": "src_to_dst"})
+        self.assertEqual(entry.cumulative_payload_bytes, 20)
         self.assertEqual(entry.status, "default")
+        self.assertTrue(cache.flow_cache.is_ready(entry))
+
+    def test_metadata_direction_is_trusted_without_port_direction_check(self):
+        # 포트 기준으로는 server->client처럼 보여도 TG metadata가 src_to_dst라면 그 값을 flow direction으로 쓴다.
+        cache = TrafficGeneratorOnlineFlowCache(
+            feature_packet_count=1,
+        )
+
+        cache.process_event(
+            event(
+                ts_us=1_000,
+                frame_number=1,
+                src_ip="10.2.0.1",
+                dst_ip="10.0.0.1",
+                src_port=5001,
+                dst_port=40000,
+                tcp_len=120,
+                payload_prefix=tg_meta(9, 100, 1, 80, TG_FLOW_DIR_SRC_TO_DST),
+            )
+        )
+
+        key = OnlineFlowKey(
+            src_ip="10.2.0.1",
+            src_port=5001,
+            dst_ip="10.0.0.1",
+            dst_port=40000,
+            flow_id=9,
+        )
+        entry = cache.flow_cache.entries[key]
+        self.assertEqual(entry.direction, "src_to_dst")
         self.assertTrue(cache.flow_cache.is_ready(entry))
 
     def test_ready_flow_transitions_to_pending(self):
@@ -238,11 +275,11 @@ class TrafficGeneratorOnlineFlowCacheTest(unittest.TestCase):
         )
 
         self.assertEqual([pkt.frame_number for pkt in entry.packets], [1])
-        self.assertEqual(entry.payload_bytes, 120)
+        self.assertEqual(entry.cumulative_payload_bytes, 120)
 
     def test_ack_only_packet_is_skipped_in_active_flow(self):
         # ACK-only 패킷은 tcp_len이 0이라 모델 feature로 쓰지 않는다.
-        # active flow 안에 있어도 payload_bytes와 packets에 추가되지 않아야 한다.
+        # active flow 안에 있어도 cumulative_payload_bytes와 packets에 추가되지 않아야 한다.
         cache = TrafficGeneratorOnlineFlowCache(
             feature_packet_count=2,
         )
@@ -274,7 +311,7 @@ class TrafficGeneratorOnlineFlowCacheTest(unittest.TestCase):
         entry = cache.flow_cache.entries[flow_key(1)]
         self.assertEqual([pkt.frame_number for pkt in entry.packets], [1])
         self.assertEqual([pkt.tcp_len for pkt in entry.packets], [120])
-        self.assertEqual(entry.payload_bytes, 120)
+        self.assertEqual(entry.cumulative_payload_bytes, 120)
         self.assertFalse(cache.flow_cache.is_ready(entry))
 
     def test_response_ack_only_before_response_metadata_is_skipped(self):
@@ -323,7 +360,7 @@ class TrafficGeneratorOnlineFlowCacheTest(unittest.TestCase):
         entry = cache.flow_cache.entries[flow_key(4)]
         self.assertEqual([pkt.frame_number for pkt in entry.packets], [3])
         self.assertEqual([pkt.tcp_len for pkt in entry.packets], [120])
-        self.assertEqual(entry.payload_bytes, 120)
+        self.assertEqual(entry.cumulative_payload_bytes, 120)
 
     def test_classification_result_uses_online_flow_key(self):
         cache = TrafficGeneratorOnlineFlowCache(

@@ -5,7 +5,7 @@ from pathlib import Path
 from pipeline.dataset.meta_loader import load_all_request_meta, build_meta_index
 from pipeline.dataset.packet_loader import iter_packets_from_pcap
 from pipeline.dataset.matcher import match_packet
-from pipeline.flow_cache import FlowCache
+from pipeline.dataset.flow_cache import FlowCache
 from pipeline.dataset.feature_extractor import build_packet_features
 
 

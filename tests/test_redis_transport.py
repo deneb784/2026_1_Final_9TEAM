@@ -31,14 +31,14 @@ class RedisStreamProducerTest(unittest.TestCase):
         stream_id = producer.publish(
             {
                 "online_flow_key": {
-                    "client_ip": "10.0.0.1",
-                    "client_port": 40000,
-                    "server_ip": "10.2.0.1",
-                    "server_port": 5001,
+                    "src_ip": "10.2.0.1",
+                    "src_port": 5001,
+                    "dst_ip": "10.0.0.1",
+                    "dst_port": 40000,
                     "flow_id": 7,
                     "direction": "dst_to_src",
                 },
-                "logical_flow_id": "10.0.0.1:40000->10.2.0.1:5001:7:dst_to_src",
+                "logical_flow_id": "10.2.0.1:5001->10.0.0.1:40000:7:dst_to_src",
                 "run_id": "unit",
                 "payload": [],
                 "producer_metrics": {

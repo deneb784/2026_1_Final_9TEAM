@@ -10,7 +10,7 @@ if __package__ is None or __package__ == "":
 from pipeline.dataset.meta_loader import load_all_request_meta, build_meta_index
 from pipeline.dataset.packet_loader import iter_packets_from_pcap
 from pipeline.dataset.matcher import match_packet
-from pipeline.flow_cache import FlowCache
+from pipeline.dataset.flow_cache import FlowCache
 from pipeline.models import FlowEntry
 
 

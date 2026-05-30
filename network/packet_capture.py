@@ -350,3 +350,130 @@ class NodeXdpPacketCapturer:
                 target = getattr(process, target_name, None)
                 if target not in (None, subprocess.DEVNULL):
                     target.close()
+
+
+class NodeTsharkOnlinePacketCapturer:
+    """각 Mininet node namespace 안에서 tshark 온라인 캡처 프로세스를 실행한다."""
+
+    def __init__(
+        self,
+        capture_points: list[CapturePoint],
+        log_dir: str | None = None,
+        feature_packet_count: int = 10,
+        server_port: int = 5001,
+        run_id: str | None = None,
+        redis_url: str | None = None,
+        redis_stream: str = "flow_features",
+        redis_stream_maxlen: int | None = None,
+        redis_response_channel: str = "flow_results",
+        classification_log: str | None = None,
+        publish_direction: str = "dst_to_src",
+        project_root: str | None = None,
+        startup_wait_sec: float = 1.0,
+    ):
+        self.capture_points = capture_points
+        self.log_dir = log_dir
+        self.feature_packet_count = feature_packet_count
+        self.server_port = server_port
+        self.run_id = run_id
+        self.redis_url = redis_url
+        self.redis_stream = redis_stream
+        self.redis_stream_maxlen = redis_stream_maxlen
+        self.redis_response_channel = redis_response_channel
+        self.classification_log = classification_log
+        self.publish_direction = publish_direction
+        self.project_root = project_root or PROJECT_ROOT
+        self.startup_wait_sec = startup_wait_sec
+        self.processes: list[subprocess.Popen] = []
+
+    def start(self) -> None:
+        """각 capture point의 node namespace에서 tshark 온라인 캡처 subprocess를 시작한다."""
+        if self.log_dir is not None:
+            os.makedirs(self.log_dir, exist_ok=True)
+
+        script = os.path.join(self.project_root, "pipeline", "realtime", "tg_tshark_capture.py")
+        for cp in self.capture_points:
+            output_name = cp.output_name or cp.interface
+            stdout_target = subprocess.DEVNULL
+            stderr_target = subprocess.DEVNULL
+            if self.log_dir is not None:
+                stdout_target = open(
+                    os.path.join(self.log_dir, "%s.tshark.stdout.txt" % output_name),
+                    "w",
+                    encoding="utf-8",
+                )
+                stderr_target = open(
+                    os.path.join(self.log_dir, "%s.tshark.stderr.txt" % output_name),
+                    "w",
+                    encoding="utf-8",
+                )
+
+            cmd = [
+                sys.executable,
+                script,
+                "-i",
+                cp.interface,
+                "--feature-packet-count",
+                str(self.feature_packet_count),
+                "--server-port",
+                str(self.server_port),
+                "--publish-direction",
+                self.publish_direction,
+                "--print-ready",
+            ]
+            capture_filter = cp.capture_filter
+            if capture_filter is None and cp.src_ips:
+                ip_filter = " or ".join("src host %s" % ip for ip in cp.src_ips)
+                capture_filter = "tcp and (%s)" % ip_filter
+            if capture_filter is not None:
+                cmd += ["--capture-filter", capture_filter]
+            if self.run_id is not None:
+                cmd += ["--run-id", self.run_id]
+            if self.redis_url is not None:
+                cmd += ["--redis-url", self.redis_url, "--redis-stream", self.redis_stream]
+                cmd += ["--redis-response-channel", self.redis_response_channel]
+                if self.classification_log is not None:
+                    cmd += ["--classification-log", self.classification_log]
+                if self.redis_stream_maxlen is not None:
+                    cmd += ["--redis-stream-maxlen", str(self.redis_stream_maxlen)]
+
+            process = cp.node.popen(
+                cmd,
+                cwd=self.project_root,
+                stdout=stdout_target,
+                stderr=stderr_target,
+            )
+            process._stdout_target = stdout_target
+            process._stderr_target = stderr_target
+            process._output_name = output_name
+            self.processes.append(process)
+
+        time.sleep(self.startup_wait_sec)
+        failed = [
+            getattr(process, "_output_name", "unknown")
+            for process in self.processes
+            if process.poll() is not None
+        ]
+        if failed:
+            raise RuntimeError(
+                "tshark 온라인 캡처 프로세스가 시작 직후 종료되었습니다: %s. "
+                "해당 *.tshark.stderr.txt를 확인하세요." % ", ".join(failed)
+            )
+
+    def stop(self) -> None:
+        """모든 node namespace tshark 온라인 캡처 subprocess를 종료한다."""
+        for process in self.processes:
+            if process.poll() is not None:
+                continue
+            process.send_signal(signal.SIGINT)
+            try:
+                process.wait(timeout=3.0)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+
+        for process in self.processes:
+            for target_name in ("_stdout_target", "_stderr_target"):
+                target = getattr(process, target_name, None)
+                if target not in (None, subprocess.DEVNULL):
+                    target.close()

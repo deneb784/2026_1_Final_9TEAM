@@ -19,7 +19,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from pipeline.realtime.online_tg_flow_cache import (
     parse_tg_metadata,
     TrafficGeneratorOnlineFlowCache,
-    XdpPacketEvent,
+    OnlinePacketEvent,
 )
 from pipeline.realtime.online_request import build_online_flow_request
 from pipeline.redis.result_subscriber import RedisResultSubscriber
@@ -30,7 +30,7 @@ from pipeline.redis.transport import RedisStreamProducer
 # XDP/BPF 쪽에서 패킷의 payload 앞부분만 읽어와 user-space로 전달합니다.
 # 이렇게 하면 커널에서 무거운 작업을 피하고, 사용자 공간에서 flow 식별과
 # 상세 처리를 수행할 수 있습니다.
-MAX_PAYLOAD_PREFIX = 32
+MAX_PAYLOAD_PREFIX = 20
 
 
 # BPF 프로그램(문자열)은 BCC에 의해 런타임에 컴파일되어 네트워크 인터페이스에
@@ -47,7 +47,7 @@ BPF_PROGRAM = r"""
 #include <linux/tcp.h>
 #include <uapi/linux/in.h>
 
-#define MAX_PAYLOAD_PREFIX 32
+#define MAX_PAYLOAD_PREFIX 20
 
 #define STAT_HOOK 0
 #define STAT_ETH_IP 1
@@ -199,9 +199,6 @@ int xdp_tg_capture(struct xdp_md *ctx)
     if (tcp_len >= MAX_PAYLOAD_PREFIX &&
         bpf_xdp_load_bytes(ctx, payload_offset, event.payload_prefix, MAX_PAYLOAD_PREFIX) == 0) {
         event.payload_prefix_len = MAX_PAYLOAD_PREFIX;
-    } else if (tcp_len >= 20 &&
-        bpf_xdp_load_bytes(ctx, payload_offset, event.payload_prefix, 20) == 0) {
-        event.payload_prefix_len = 20;
     }
 
     /* 추출한 이벤트를 perf 버퍼로 사용자 공간에 제출 */
@@ -354,8 +351,8 @@ def make_event(
     frame_number: int,
     ifname_by_index: dict[int, str],
     monotonic_to_epoch_offset_ns: int,
-) -> XdpPacketEvent:
-    """커널 perf event 구조체를 Python 파이프라인이 쓰는 XdpPacketEvent로 바꾼다.
+) -> OnlinePacketEvent:
+    """커널 perf event 구조체를 온라인 파이프라인 공통 이벤트로 바꾼다.
 
     설명:
     - raw: ctypes로 해석한 BPF의 packet_event_t 구조체
@@ -363,13 +360,13 @@ def make_event(
     - ifname_by_index: 인터페이스 인덱스 -> 이름 매핑
     - monotonic_to_epoch_offset_ns: 커널의 monotonic 타임스탬프를 epoch로 변환하기 위한 오프셋
 
-    반환값은 pipeline에서 사용하는 XdpPacketEvent 데이터 클래스입니다.
+    반환값은 pipeline에서 사용하는 OnlinePacketEvent 데이터 클래스입니다.
     """
     prefix_len = int(raw.payload_prefix_len)
     payload_prefix = bytes(raw.payload_prefix[:prefix_len])
     ifname = ifname_by_index.get(int(raw.ifindex), f"ifindex-{int(raw.ifindex)}")
     epoch_ts_ns = int(raw.ts_ns) + monotonic_to_epoch_offset_ns
-    return XdpPacketEvent(
+    return OnlinePacketEvent(
         ts_us=int(raw.ts_ns // 1000),
         epoch_ts_us=int(epoch_ts_ns // 1000),
         frame_number=frame_number,
@@ -472,7 +469,7 @@ def main() -> int:
     )
     result_subscriber = None
     # perf callback 안에서 Redis XADD를 직접 수행하면 네트워크/Redis I/O 시간만큼
-    # XDP 이벤트 처리가 막힌다. 그래서 callback은 request를 이 Queue에 넣기만 하고,
+    # 온라인 패킷 이벤트 처리가 막힌다. 그래서 callback은 request를 이 Queue에 넣기만 하고,
     # 실제 Redis publish는 아래 publisher_loop thread가 담당한다.
     publish_queue: queue.Queue[tuple[dict, object] | object] = queue.Queue()
     publisher_stop = object()
@@ -492,14 +489,14 @@ def main() -> int:
         if args.print_ready:
             key = updated.key
             print(
-                "[classified] client=%s:%s server=%s:%s flow_id=%s direction=%s label=%s score=%.4f e2e_ms=%s"
+                "[classified] src=%s:%s dst=%s:%s flow_id=%s direction=%s label=%s score=%.4f e2e_ms=%s"
                 % (
-                    key.client_ip,
-                    key.client_port,
-                    key.server_ip,
-                    key.server_port,
+                    key.src_ip,
+                    key.src_port,
+                    key.dst_ip,
+                    key.dst_port,
                     key.flow_id,
-                    key.direction,
+                    updated.direction,
                     updated.status,
                     updated.model_score if updated.model_score is not None else -1.0,
                     (
@@ -533,14 +530,14 @@ def main() -> int:
                 if args.print_ready:
                     flow_key = request["online_flow_key"]
                     print(
-                        "[stream] id=%s stream=%s client=%s:%s server=%s:%s flow_id=%s direction=%s"
+                        "[stream] id=%s stream=%s src=%s:%s dst=%s:%s flow_id=%s direction=%s"
                         % (
                             stream_id,
                             args.redis_stream,
-                            flow_key["client_ip"],
-                            flow_key["client_port"],
-                            flow_key["server_ip"],
-                            flow_key["server_port"],
+                            flow_key["src_ip"],
+                            flow_key["src_port"],
+                            flow_key["dst_ip"],
+                            flow_key["dst_port"],
                             flow_key["flow_id"],
                             flow_key["direction"],
                         )
@@ -609,16 +606,16 @@ def main() -> int:
                 tcp_lens = [pkt.tcp_len for pkt in entry.packets]
                 key = entry.key
                 print(
-                    "[ready] client=%s:%s server=%s:%s flow_id=%s direction=%s packets=%s payload_bytes=%s tcp_lens=%s"
+                    "[ready] src=%s:%s dst=%s:%s flow_id=%s direction=%s packets=%s cumulative_payload_bytes=%s tcp_lens=%s"
                     % (
-                        key.client_ip,
-                        key.client_port,
-                        key.server_ip,
-                        key.server_port,
+                        key.src_ip,
+                        key.src_port,
+                        key.dst_ip,
+                        key.dst_port,
                         key.flow_id,
-                        key.direction,
+                        entry.direction,
                         len(entry.packets),
-                        entry.payload_bytes,
+                        entry.cumulative_payload_bytes,
                         tcp_lens,
                     )
                 )

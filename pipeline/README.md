@@ -5,7 +5,6 @@
 ```text
 pipeline/
   models.py
-  flow_cache.py
   dataset/
   realtime/
   redis/
@@ -15,10 +14,9 @@ pipeline/
 
 ```text
 pipeline/models.py
-pipeline/flow_cache.py
 ```
 
-Shared data models and the offline dataset flow cache.
+Shared data models used by dataset and realtime pipelines.
 
 ## Dataset Generation
 
@@ -27,6 +25,7 @@ pipeline/dataset/
   packet_loader.py
   meta_loader.py
   matcher.py
+  flow_cache.py
   feature_extractor.py
   pipeline.py
   dataset_builder.py

@@ -46,13 +46,13 @@ def packet(frame_number: int, ts_us: int, tcp_len: int) -> PacketRecord:
 def online_entry(flow_id: int = 7, direction: str = "dst_to_src") -> OnlineFlowEntry:
     return OnlineFlowEntry(
         key=OnlineFlowKey(
-            client_ip="10.0.0.1",
-            client_port=40000,
-            server_ip="10.2.0.1",
-            server_port=5001,
+            src_ip="10.2.0.1",
+            src_port=5001,
+            dst_ip="10.0.0.1",
+            dst_port=40000,
             flow_id=flow_id,
-            direction=direction,
-        )
+        ),
+        direction=direction,
     )
 
 
@@ -65,7 +65,7 @@ class OnlineRequestTest(unittest.TestCase):
             packet(frame_number=1, ts_us=1_000, tcp_len=0),
             packet(frame_number=2, ts_us=1_010, tcp_len=1448),
         ])
-        entry.payload_bytes = 1448
+        entry.cumulative_payload_bytes = 1448
 
         request = build_online_flow_request(entry, packet_count=3, run_id="unit")
 
@@ -73,7 +73,7 @@ class OnlineRequestTest(unittest.TestCase):
         self.assertNotIn("request_key", request)
         self.assertEqual(
             request["logical_flow_id"],
-            "10.0.0.1:40000->10.2.0.1:5001:7:dst_to_src",
+            "10.2.0.1:5001->10.0.0.1:40000:7:dst_to_src",
         )
         self.assertEqual(request["seq_len"], 1)
         self.assertEqual(len(request["x"]), 3)
@@ -94,7 +94,7 @@ class OnlineRequestTest(unittest.TestCase):
         # 여기서는 capture_mode와 feature_ready_wall_ns가 request에 보존되는지 확인한다.
         entry = online_entry()
         entry.packets.append(packet(frame_number=1, ts_us=1_000, tcp_len=1448))
-        entry.payload_bytes = 1448
+        entry.cumulative_payload_bytes = 1448
 
         request = build_online_flow_request(
             entry,
@@ -128,20 +128,19 @@ class OnlineRequestTest(unittest.TestCase):
 
     def test_build_online_flow_request_keeps_online_flow_key(self):
         key = OnlineFlowKey(
-            client_ip="10.0.0.1",
-            client_port=40000,
-            server_ip="10.2.0.1",
-            server_port=5001,
+            src_ip="10.2.0.1",
+            src_port=5001,
+            dst_ip="10.0.0.1",
+            dst_port=40000,
             flow_id=7,
-            direction="dst_to_src",
         )
-        entry = OnlineFlowEntry(key=key)
+        entry = OnlineFlowEntry(key=key, direction="dst_to_src")
         entry.packets.append(packet(frame_number=1, ts_us=1_000, tcp_len=1448))
-        entry.payload_bytes = 1448
+        entry.cumulative_payload_bytes = 1448
 
         request = build_online_flow_request(entry, packet_count=3)
 
-        self.assertEqual(request["online_flow_key"], key.as_dict())
+        self.assertEqual(request["online_flow_key"], {**key.as_dict(), "direction": "dst_to_src"})
         self.assertNotIn("request_key", request)
 
 

@@ -7,6 +7,7 @@ from network.packet_capture import (
     CapturePoint,
     CombinedPacketCapturer,
     NodeXdpPacketCapturer,
+    NodeTsharkOnlinePacketCapturer,
     PacketCapturer,
 )
 from network.topology import fatTreeBuilder
@@ -85,7 +86,7 @@ def main():
     parser.add_argument('--load-mbps', type=int, default=80)
     parser.add_argument('--seed-base', type=int, default=1000)
     parser.add_argument('--cdf-file', default='DCTCP_CDF.txt')
-    parser.add_argument('--capture-mode', choices=['tshark', 'xdp', 'xdp-verify', 'none'], default='tshark')
+    parser.add_argument('--capture-mode', choices=['pcap', 'tshark', 'xdp', 'xdp-verify', 'none'], default='tshark')
     parser.add_argument('--xdp-mode', choices=['skb', 'native', 'hw'], default='skb')
     parser.add_argument('--feature-packet-count', type=int, default=10)
     parser.add_argument('--redis-url', default=None)
@@ -118,7 +119,7 @@ def main():
     os.makedirs(results_dir, exist_ok=True)
     os.makedirs(capture_dir, exist_ok=True)
     classification_log = args.classification_log
-    if classification_log is None and args.redis_url is not None and args.capture_mode in ('xdp', 'xdp-verify'):
+    if classification_log is None and args.redis_url is not None and args.capture_mode in ('xdp', 'xdp-verify', 'tshark'):
         classification_log = os.path.join(results_dir, 'online_classification_latency.jsonl')
 
     # TrafficGenerator 컴파일
@@ -199,7 +200,7 @@ def main():
         os.makedirs(runtime_capture_dir, exist_ok=True)
         os.chmod(runtime_capture_dir, 0o777)
 
-        if args.capture_mode == 'tshark':
+        if args.capture_mode == 'pcap':
             # PacketCapturer 시작
             capturer = PacketCapturer(
                 capture_points=capture_points,
@@ -208,16 +209,33 @@ def main():
             )
             capturer.start()
             print('[*] tshark 패킷 캡처 시작 (임시 저장 위치: %s)' % runtime_capture_dir)
+        elif args.capture_mode == 'tshark':
+            # host egress는 XDP egress가 아니라 반대편 edge host-facing port ingress에서 관측한다.
+            # capture_points는 edge_p*_e*-eth*와 src host filter를 담고 있어 host가 내보낸 패킷만 본다.
+            capturer = NodeTsharkOnlinePacketCapturer(
+                capture_points=capture_points,
+                log_dir=os.path.join(runtime_capture_dir, 'logs'),
+                feature_packet_count=args.feature_packet_count,
+                server_port=DST_PORT,
+                run_id=run_id,
+                redis_url=args.redis_url,
+                redis_stream=args.redis_stream,
+                redis_stream_maxlen=args.redis_stream_maxlen,
+                redis_response_channel=args.redis_response_channel,
+                classification_log=classification_log,
+                publish_direction=args.publish_direction,
+            )
+            capturer.start()
+            print('[*] tshark 온라인 캡처 시작 (edge host-facing egress 관측 지점 %d개)' % len(capture_points))
+            if args.redis_url is not None:
+                print('[*] Redis Stream 전송 활성화 (stream=%s, direction=%s, response_channel=%s)' % (
+                    args.redis_stream,
+                    args.publish_direction,
+                    args.redis_response_channel,
+                ))
         elif args.capture_mode in ('xdp', 'xdp-verify'):
-            # XDP는 ingress hook이므로 OVS switch port가 아니라 각 host namespace의 h*-eth0에 붙인다.
-            xdp_capture_points = [
-                CapturePoint(
-                    node=host,
-                    interface='%s-eth0' % host.name,
-                    output_name=host.name,
-                )
-                for host in network.hosts
-            ]
+            # host egress는 host 쪽 XDP egress가 아니라 edge host-facing port ingress에서 관측한다.
+            xdp_capture_points = capture_points
             capturer = NodeXdpPacketCapturer(
                 capture_points=xdp_capture_points,
                 log_dir=os.path.join(runtime_capture_dir, 'logs'),
@@ -234,29 +252,20 @@ def main():
                 publish_direction=args.publish_direction,
             )
             if args.capture_mode == 'xdp-verify':
-                tshark_capture_points = [
-                    CapturePoint(
-                        node=host,
-                        interface='%s-eth0' % host.name,
-                        capture_filter='tcp and dst host %s' % host.IP(),
-                        output_name='%s.ingress' % host.name,
-                    )
-                    for host in network.hosts
-                ]
                 tshark_capturer = PacketCapturer(
-                    capture_points=tshark_capture_points,
+                    capture_points=capture_points,
                     output_dir=runtime_capture_dir,
                     log_dir=os.path.join(runtime_capture_dir, 'logs'),
                 )
                 capturer = CombinedPacketCapturer([tshark_capturer, capturer])
             capturer.start()
             if args.capture_mode == 'xdp-verify':
-                print('[*] XDP+tshark 검증 캡처 시작 (mode=%s, host 인터페이스 %d개)' % (
+                print('[*] XDP+tshark 검증 캡처 시작 (mode=%s, edge host-facing egress 관측 지점 %d개)' % (
                     args.xdp_mode,
                     len(xdp_capture_points),
                 ))
             else:
-                print('[*] XDP 패킷 캡처 시작 (mode=%s, host 인터페이스 %d개)' % (
+                print('[*] XDP 패킷 캡처 시작 (mode=%s, edge host-facing egress 관측 지점 %d개)' % (
                     args.xdp_mode,
                     len(xdp_capture_points),
                 ))

@@ -581,7 +581,7 @@ csv_results/
   - `captured_packet/*.pcap`를 `tshark`로 읽어 `PacketRecord` 객체로 변환한다.
 - `pipeline/dataset/matcher.py`
   - 패킷의 `src/dst ip:port` 및 시간 구간을 이용해 패킷을 `(src_index, flow_id, direction)`에 매칭한다.
-- `pipeline/flow_cache.py`
+- `pipeline/dataset/flow_cache.py`
   - 같은 방향의 패킷을 `(src_index, flow_id, direction)` 키로 누적하고, packet sequence 생성 가능 여부를 관리한다.
 - `pipeline/dataset/feature_extractor.py`
   - 누적된 패킷 버퍼로부터 packet-level feature sequence를 생성한다.

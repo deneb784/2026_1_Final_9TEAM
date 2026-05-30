@@ -27,7 +27,7 @@ xdp/tg_xdp_capture.py
   -> RealtimeFlowCache entry 상태를 elephant/mice로 갱신
 ```
 
-`tshark` 모드는 기본적으로 pcap 저장과 오프라인 데이터셋 생성용이다. Redis로 바로 전송하는 실시간 경로는 `--capture-mode xdp` 또는 `--capture-mode xdp-verify`에서 동작한다.
+`pcap` 모드는 tshark로 pcap을 저장하는 오프라인 데이터셋 생성용이다. Redis로 바로 전송하는 실시간 경로는 `--capture-mode xdp`, `--capture-mode tshark`, 또는 검증용 `--capture-mode xdp-verify`에서 동작한다.
 
 ## 2. 관련 파일
 
@@ -46,19 +46,19 @@ xdp/tg_xdp_capture.py
 
 ## 3. 캡처 위치
 
-XDP는 OVS edge switch port가 아니라 각 Mininet host namespace의 `h*-eth0` ingress에 붙는다.
+XDP와 tshark 실시간 캡처는 각 host가 edge switch로 내보내는 패킷을 edge switch의 host-facing port ingress에서 관측한다.
 
-`main.py`는 `--capture-mode xdp`에서 모든 host에 대해 다음 형태의 capture point를 만든다.
+`main.py`는 실시간 캡처에서 모든 edge host-facing 포트에 대해 다음 형태의 capture point를 만든다.
 
 ```python
 CapturePoint(
-    node=host,
-    interface="%s-eth0" % host.name,
-    output_name=host.name,
+    node=edge_node,
+    interface="%s-eth%d" % (edge_name, i),
+    src_ips=(host_ip,),
 )
 ```
 
-그 다음 `NodeXdpPacketCapturer`가 각 host namespace 안에서 `xdp/tg_xdp_capture.py`를 실행한다.
+그 다음 `NodeXdpPacketCapturer` 또는 `NodeTsharkOnlinePacketCapturer`가 edge switch namespace 안에서 실시간 캡처 스크립트를 실행한다.
 
 ## 4. XDP event 필드
 
