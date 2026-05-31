@@ -19,7 +19,7 @@ Mininet + TrafficGenerator
 실시간 온라인 경로는 다음 흐름이다.
 
 ```text
-xdp/tg_xdp_capture.py
+xdp/tg_xdp_capture.py 또는 pipeline/realtime/tg_tshark_capture.py
   -> pipeline/realtime/*
   -> pipeline/redis/transport.py
   -> model/step_GRU/stream_worker.py
@@ -75,6 +75,13 @@ XDP 기반 온라인 패킷 캡처와 feature-ready trigger를 담당한다.
 | `pipeline/realtime/online_tg_flow_cache.py` | TrafficGenerator payload metadata를 이용해 실시간 flow를 식별한다. online packet event를 flow별로 모으고, feature packet count에 도달했는지 판단한다. |
 | `pipeline/realtime/online_flow_cache.py` | 실시간 FlowCache의 기본 자료구조. classification 결과를 기존 flow entry에 되붙이는 역할을 한다. |
 | `pipeline/realtime/online_request.py` | ready flow entry를 step_GRU worker가 읽을 수 있는 request dict로 변환한다. `x`, `seq_len`, `feature_names`, `producer_metrics`를 구성한다. |
+| `pipeline/realtime/tg_tshark_capture.py` | tshark stdout을 online packet event로 파싱하고, XDP 경로와 같은 online cache/request/Redis Stream 경로로 전달한다. XDP와 tshark backend latency를 같은 지표로 비교할 때 사용한다. |
+
+온라인 capture backend 비교:
+
+- XDP 경로는 `xdp/tg_xdp_capture.py`가 커널 XDP perf event를 user-space event로 변환한다.
+- tshark 경로는 `pipeline/realtime/tg_tshark_capture.py`가 tshark `-T fields` stdout을 event로 변환한다.
+- 두 경로 모두 `online_tg_flow_cache.py`, `online_request.py`, `pipeline/redis/transport.py`를 공유하므로 Redis XADD 이후 worker 경로는 동일하게 비교할 수 있다.
 
 ## `pipeline/redis/`
 
@@ -202,7 +209,7 @@ Mininet topology, traffic generator 실행, packet capture 실행을 감싸는 P
 | `network/controller.py` | controller 실행/연동 관련 코드 |
 | `network/rule_ecmp.py` | ECMP rule 설정 관련 코드 |
 | `network/traffic_generator.py` | TrafficGenerator client/server 실행 관리 |
-| `network/packet_capture.py` | tshark/pcap capture 실행 관리 |
+| `network/packet_capture.py` | tshark/pcap/XDP capture 실행 관리. `capture-mode=tshark`에서는 online tshark capture process를, `capture-mode=xdp`/`xdp-verify`에서는 XDP capture process를 실행한다. |
 
 `main.py`가 이 모듈들을 호출해 실험을 실행한다.
 
@@ -214,7 +221,7 @@ Mininet topology, traffic generator 실행, packet capture 실행을 감싸는 P
 |---|---|
 | `analyze/online_e2e_latency.py` | `online_classification_latency.jsonl`을 읽어 online classification latency를 요약한다. p50/p95/p99/max를 출력한다. |
 | `analyze/online_fct_deadline.py` | `online_classification_latency.jsonl`과 `flows_*_meta.csv`를 join해서 FCT 전에 cache update가 끝났는지 분석한다. |
-| `analyze/redis_stream_latency.py` | Redis Stream과 latency 보조 stream을 직접 읽어 Redis publish 관련 latency를 분석한다. |
+| `analyze/redis_stream_latency.py` | Redis Stream과 latency 보조 stream을 직접 읽어 producer -> Redis XADD 지연을 분석한다. `ready_to_xadd_done`, `xadd_duration`, `first_packet_to_xadd_done`, `last_packet_to_xadd_done`를 CSV와 분위수로 출력한다. XDP/tshark capture backend 비교의 핵심 분석 스크립트다. |
 | `analyze/verify_xdp_tshark_capture.py` | XDP capture 결과와 tshark/pcap 기반 결과를 비교 검증한다. |
 | `analyze/pcap_to_csv.py` | pcap을 CSV 형태로 변환 |
 | `analyze/compare_cdfs.py` | workload CDF 비교/시각화 |
@@ -235,6 +242,23 @@ python3 analyze/online_fct_deadline.py \
   --flow-meta 'runs/mininet_vl2_cuda_50/results/flows_*_meta.csv' \
   --run-id vl2_cuda_50
 ```
+
+```bash
+python3 analyze/redis_stream_latency.py \
+  --redis-url 'unix:///tmp/capstone-redis.sock?db=0' \
+  --stream flow_features \
+  --run-id vl2_cuda_xdp_probe_20 \
+  --csv-out runs/mininet_vl2_cuda_xdp_probe_20/results/redis_stream_latency.csv
+```
+
+Redis/XADD 지표 해석:
+
+| 지표 | 의미 | 용도 |
+|---|---|---|
+| `ready_to_xadd_done` | feature ready 시점부터 Redis XADD 완료까지 | Redis request 발행 단계 비교 |
+| `xadd_duration` | Redis XADD 호출 시작부터 완료까지 | Redis 호출 자체 비용 |
+| `first_packet_to_xadd_done` | feature에 포함된 첫 패킷 관측부터 Redis XADD 완료까지 | flow duration 영향을 포함한 참고 지표 |
+| `last_packet_to_xadd_done` | feature에 필요한 마지막 패킷 관측부터 Redis XADD 완료까지 | capture/parsing/queue backlog 비교의 핵심 지표 |
 
 ## `docs/`
 
@@ -272,6 +296,8 @@ runs/mininet_vl2_cuda_50/
 | `runs/*/results/flows_*.txt` | source별 FCT 결과. 헤더 없음 |
 | `runs/*/results/flows_*_meta.csv` | source별 flow metadata. FCT-before 분석에 필요 |
 | `runs/*/results/online_classification_latency.jsonl` | XDP 온라인 분류 결과와 end-to-end latency 기록 |
+| `runs/*/results/online_e2e_latency_summary.json` | `online_e2e_latency.py`가 만든 E2E latency summary |
+| `runs/*/results/redis_stream_latency.csv` | `redis_stream_latency.py`가 만든 producer -> Redis XADD latency CSV |
 | `runs/*/captured_packet/` | tshark 또는 검증 모드에서 저장한 pcap 파일 |
 | `runs/step_gru/*.jsonl` | model worker가 남긴 결과 로그. latency 핵심 분석은 보통 `online_classification_latency.jsonl`을 사용 |
 
@@ -279,6 +305,7 @@ runs/mininet_vl2_cuda_50/
 
 - `runs/` 아래 파일은 실험 산출물이다.
 - 같은 `run-id`로 여러 번 실행하면 로그가 섞일 수 있으므로, latency/FCT 분석 전에는 기존 결과를 정리하는 것이 좋다.
+- Redis Stream 기반 latency CSV는 Redis에 남아 있는 Stream entry를 읽어 만들기 때문에, 여러 run을 같은 Redis에 남겨두었다면 `--run-id` 또는 `--capture-mode` 필터를 지정하는 것이 좋다.
 
 ## `dataset/`
 
@@ -318,6 +345,7 @@ data/runs_dctcp_payload_only_4loads.tgz
 | `tests/test_online_request.py` | ready flow를 online request로 변환하는 코드 검증 |
 | `tests/test_redis_transport.py` | Redis Stream producer field 구성 검증 |
 | `tests/test_online_e2e_latency.py` | online latency summary 계산 검증 |
+| `tests/test_tshark_online_capture.py` | tshark stdout line을 online packet event로 변환하는 파서와 TG metadata 처리 검증 |
 | `tests/test_step_gru_runtime.py` | step_GRU runtime 관련 검증 |
 | `tests/test_step_gru_dataset_catalog.py` | dataset catalog path resolution 검증 |
 
@@ -347,6 +375,7 @@ python3 -m unittest tests.test_redis_transport tests.test_online_request
 README.md
 main.py
 xdp/tg_xdp_capture.py
+pipeline/realtime/tg_tshark_capture.py
 model/step_GRU/stream_worker.py
 pipeline/redis/*
 pipeline/realtime/*
@@ -380,7 +409,10 @@ latency 결과를 보고 싶을 때:
 
 ```text
 runs/*/results/online_classification_latency.jsonl
+runs/*/results/online_e2e_latency_summary.json
+runs/*/results/redis_stream_latency.csv
 analyze/online_e2e_latency.py
+analyze/redis_stream_latency.py
 docs/XDP_ONLINE_PIPELINE_LATENCY_SUMMARY.md
 ```
 
@@ -393,7 +425,12 @@ docs/XDP_ONLINE_PIPELINE_LATENCY_SUMMARY.md
 docs/PROJECT_FILE_GUIDE.md
 README.md
 analyze/online_e2e_latency.py
+analyze/redis_stream_latency.py
 analyze/online_fct_deadline.py
-runs/mininet_vl2_cuda_50/results/online_classification_latency.jsonl
-runs/mininet_vl2_cuda_50/results/flows_*_meta.csv
+runs/mininet_vl2_cuda_xdp_probe_20/results/online_classification_latency.jsonl
+runs/mininet_vl2_cuda_xdp_probe_20/results/online_e2e_latency_summary.json
+runs/mininet_vl2_cuda_xdp_probe_20/results/redis_stream_latency.csv
+runs/mininet_vl2_cuda_tshark_probe_20c/results/online_classification_latency.jsonl
+runs/mininet_vl2_cuda_tshark_probe_20c/results/online_e2e_latency_summary.json
+runs/mininet_vl2_cuda_tshark_probe_20c/results/redis_stream_latency.csv
 ```

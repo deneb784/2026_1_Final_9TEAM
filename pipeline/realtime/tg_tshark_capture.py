@@ -10,7 +10,7 @@ import threading
 import time
 from pathlib import Path
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
+sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from pipeline.realtime.online_request import build_online_flow_request
 from pipeline.realtime.online_tg_flow_cache import (

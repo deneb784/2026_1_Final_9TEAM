@@ -160,6 +160,78 @@ inference_ms                               0.586    1.005    4.028    17.527
 - 전체 FlowCache 반영은 p50 1.106 ms, p99 4.683 ms였다.
 - tail latency는 주로 inference 단계의 일시적인 지연에서 발생했다.
 
+## XDP와 tshark backend 비교
+
+`feat/xdp-tshark-latency` 브랜치에서는 같은 online Redis/worker 경로를 공유하도록 XDP backend와 tshark backend를 비교했다.
+
+실험 조건:
+
+```text
+topology/workload = VL2 CDF
+model = dataset/elephant_dst_to_src/vl2/seq10/weights.pt
+device = CUDA
+feature_packet_count = 10
+publish_direction = dst_to_src
+Redis = Unix Domain Socket Stream
+samples = 34 per backend
+```
+
+비교는 두 층위로 나누어 봐야 한다.
+
+1. Capture -> Redis XADD: producer/capture backend 자체의 지연
+2. Online E2E: Redis 전달, worker 수신, CUDA inference, FlowCache update까지 포함한 전체 loop 지연
+
+### Capture -> Redis XADD
+
+이 지표는 Redis Stream에 남은 request와 latency 보조 stream을 `analyze/redis_stream_latency.py`로 분석한 결과다.
+
+| capture | samples | ready_to_xadd p50 | ready_to_xadd p95 | xadd_duration p50 | last_packet_to_xadd p50 | last_packet_to_xadd p95 | last_packet_to_xadd p99 | last_packet_to_xadd max |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| XDP | 34 | 0.209 ms | 0.321 ms | 0.145 ms | 0.262 ms | 0.384 ms | 0.403 ms | 0.417 ms |
+| tshark | 34 | 0.283 ms | 0.456 ms | 0.218 ms | 145.996 ms | 393.096 ms | 440.794 ms | 442.182 ms |
+
+해석:
+
+- Redis XADD 자체는 두 backend 모두 sub-ms 수준이다.
+- `ready_to_xadd_done`도 XDP와 tshark 간 차이가 크지 않다.
+- backend 차이는 `last_packet_to_xadd_done`에서 가장 크게 나타난다.
+- XDP는 마지막 feature packet 관측 후 Redis XADD 완료까지 p50 0.262 ms였다.
+- tshark는 같은 지표가 p50 145.996 ms, p95 393.096 ms로 크게 밀렸다.
+
+따라서 capture backend 비교에서는 `last_packet_to_xadd_done`를 핵심 지표로 보는 것이 가장 적절하다. `first_packet_to_xadd_done`는 flow duration과 packet inter-arrival 영향을 함께 받지만, `last_packet_to_xadd_done`는 모델 입력에 필요한 마지막 패킷이 이미 관측된 뒤 request가 Redis로 나가기까지의 지연을 보여준다.
+
+### Online E2E / worker 포함
+
+이 지표는 `online_classification_latency.jsonl`을 `analyze/online_e2e_latency.py`로 분석한 결과다.
+
+| capture | samples | ready_to_cache p50 | ready_to_cache p95 | ready_to_worker p50 | ready_to_worker p95 | inference p50 | inference p95 | worker_received_to_done p50 | worker_received_to_done p95 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| XDP | 34 | 0.842 ms | 1.190 ms | 0.242 ms | 0.370 ms | 0.393 ms | 0.658 ms | 0.434 ms | 0.718 ms |
+| tshark | 34 | 1.795 ms | 2.888 ms | 0.329 ms | 0.467 ms | 1.178 ms | 1.657 ms | 1.269 ms | 1.752 ms |
+
+CUDA inference steady-state는 첫 inference를 제외하고 따로 보았다.
+
+| capture | rows | first inference | steady p50 | steady max |
+|---|---:|---:|---:|---:|
+| XDP | 34 | 8.155 ms | 0.392 ms | 0.733 ms |
+| tshark | 34 | 8.828 ms | 1.177 ms | 1.709 ms |
+
+해석:
+
+- E2E에서도 XDP가 tshark보다 낮은 지연을 보였다.
+- 다만 Redis 전달 구간만 보면 차이는 sub-ms 수준으로 비교적 작다.
+- capture backend의 차이는 E2E 표보다 `last_packet_to_xadd_done`에서 더 선명하게 드러난다.
+- XDP는 capture producer path를 sub-ms로 유지하고, downstream Redis/worker/CUDA 구간은 별도 병목으로 남는다.
+
+결과 파일:
+
+```text
+runs/mininet_vl2_cuda_xdp_probe_20/results/redis_stream_latency.csv
+runs/mininet_vl2_cuda_xdp_probe_20/results/online_e2e_latency_summary.json
+runs/mininet_vl2_cuda_tshark_probe_20c/results/redis_stream_latency.csv
+runs/mininet_vl2_cuda_tshark_probe_20c/results/online_e2e_latency_summary.json
+```
+
 ## FCT-before 기준
 
 FCT 전에 모델 결과가 FlowCache에 반영됐는지는 다음 기준으로 평가했다.
@@ -194,7 +266,9 @@ cache_update_margin_ms p50 = 989.646 ms
 
 VL2 workload에서는 worker 튜닝까지 적용한 뒤 feature-ready부터 FlowCache update까지 p50 1.1 ms, p99 4.7 ms를 달성했으며, 분류된 flow 84개 모두 FCT 전에 cache에 반영되었다.
 
-따라서 본 시스템은 XDP 기반으로 packet-arrival 시점에서 feature-ready trigger를 만들고, long-tailed workload에서 near-real-time online flow classification을 수행할 수 있음을 확인했다.
+추가로 같은 online Redis/worker 경로에서 XDP와 tshark backend를 비교한 결과, Redis XADD 자체는 둘 다 sub-ms였지만 `last_packet_to_xadd_done`는 XDP p50 0.262 ms, tshark p50 145.996 ms로 크게 벌어졌다.
+
+따라서 본 시스템은 XDP 기반으로 packet-arrival 시점에 가까운 feature-ready trigger를 만들고, long-tailed workload에서 near-real-time online flow classification을 수행할 수 있음을 확인했다. capture backend 성능 비교에서는 E2E latency보다 `last_packet_to_xadd_done`가 XDP의 장점을 더 직접적으로 보여준다.
 
 ## 발표에서 조심할 표현
 
@@ -205,6 +279,7 @@ XDP 기반 실시간 온라인 플로우 분류 파이프라인
 near-real-time online flow classification prototype
 feature-ready 이후 p50 1.1 ms 내 FlowCache update
 VL2 기준 분류된 flow 100% FCT-before update
+XDP last-packet-to-XADD p50 0.262 ms
 ```
 
 피하는 것이 좋은 표현:
@@ -214,8 +289,9 @@ VL2 기준 분류된 flow 100% FCT-before update
 hard real-time 보장
 line-rate 제어 완성
 FB short-flow까지 모두 same-flow control 가능
+E2E latency만으로 capture backend 성능을 단정
 ```
 
 ## 한 줄 요약
 
-XDP 자체와 request 생성은 병목이 아니었고, 기존 병목은 Redis publish와 worker 수신 구간이었다. Redis publish를 callback 밖으로 분리하고 worker를 가볍게 튜닝한 결과, VL2에서는 feature-ready 이후 p50 1.1 ms, p99 4.7 ms 안에 FlowCache update를 완료했고, 분류된 flow 전부가 FCT 전에 반영됐다.
+XDP 자체와 request 생성은 병목이 아니었고, 기존 병목은 Redis publish와 worker 수신 구간이었다. Redis publish를 callback 밖으로 분리하고 worker를 가볍게 튜닝한 결과, VL2에서는 feature-ready 이후 p50 1.1 ms, p99 4.7 ms 안에 FlowCache update를 완료했고, XDP/tshark 비교에서는 마지막 feature packet 관측 후 Redis XADD 완료까지의 지연이 XDP p50 0.262 ms, tshark p50 145.996 ms로 나타났다.
