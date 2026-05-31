@@ -97,6 +97,22 @@ def flow_join_key_from_meta(row: dict[str, str]) -> tuple[str, int, str, int, in
 def flow_join_key_from_result(row: dict[str, Any]) -> tuple[str, int, str, int, int] | None:
     """classification result row에서 flow metadata와 join할 key를 만든다."""
     key = row.get("online_flow_key") or {}
+
+    # 현재 online_flow_key는 패킷 방향 그대로 src/dst를 담는다.
+    if all(key.get(field) is not None for field in ("src_ip", "src_port", "dst_ip", "dst_port", "flow_id")):
+        src_ip = str(key["src_ip"])
+        src_port = int(key["src_port"])
+        dst_ip = str(key["dst_ip"])
+        dst_port = int(key["dst_port"])
+        flow_id = int(key["flow_id"])
+        direction = key.get("direction")
+        if direction == "dst_to_src":
+            # flow metadata는 TrafficGenerator request 기준(src client -> dst server)이므로
+            # 응답 방향 결과는 src/dst를 뒤집어 metadata key와 맞춘다.
+            return (dst_ip, dst_port, src_ip, src_port, flow_id)
+        return (src_ip, src_port, dst_ip, dst_port, flow_id)
+
+    # 예전 로그 호환: client/server로 정규화된 key를 읽는다.
     required = ("client_ip", "client_port", "server_ip", "server_port", "flow_id")
     if any(key.get(field) is None for field in required):
         return None
