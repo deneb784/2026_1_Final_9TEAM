@@ -31,6 +31,7 @@ from pipeline.redis.transport import RedisStreamProducer
 # 이렇게 하면 커널에서 무거운 작업을 피하고, 사용자 공간에서 flow 식별과
 # 상세 처리를 수행할 수 있습니다.
 MAX_PAYLOAD_PREFIX = 20
+DATASET_TCP_WINDOW_SIZE = 43520
 
 
 # BPF 프로그램(문자열)은 BCC에 의해 런타임에 컴파일되어 네트워크 인터페이스에
@@ -386,7 +387,7 @@ def make_event(
         tcp_seq=int(raw.seq),
         tcp_ack=int(raw.ack_seq),
         tcp_flags=int(raw.tcp_flags),
-        tcp_window_size=int(raw.window),
+        tcp_window_size=DATASET_TCP_WINDOW_SIZE,
         payload_prefix=payload_prefix,
     )
 

@@ -6,7 +6,7 @@ from typing import Any
 import torch
 
 from .data import DIRECTION_TO_INDEX, FeatureScaler
-from .models import DynamicPacketGRU
+from .models import DynamicPacketGRU, get_flow_stats
 
 
 def _torch_load_checkpoint(model_path: str | Path, device: torch.device) -> Any:
@@ -49,6 +49,7 @@ def load_model(
     device: torch.device,
     input_size: int | None = None,
     hidden_size: int | None = None,
+    steepness: float = 3.0,
 ) -> DynamicPacketGRU:
     """Load a DynamicPacketGRU from a state_dict or checkpoint dict."""
     checkpoint = _torch_load_checkpoint(model_path, device)
@@ -69,7 +70,11 @@ def load_model(
             f"checkpoint expects hidden_size={inferred_hidden_size}, got hidden_size={hidden_size}"
         )
 
-    model = DynamicPacketGRU(input_size=input_size, hidden_size=hidden_size).to(device)
+    model = DynamicPacketGRU(
+        input_size=input_size,
+        hidden_size=hidden_size,
+        steepness=steepness,
+    ).to(device)
     model.load_state_dict(state)
     model.eval()
     return model
@@ -85,17 +90,27 @@ class FlowClassifier:
         scaler_path: str | Path | None = None,
         input_size: int | None = None,
         hidden_size: int | None = None,
+        steepness: float = 3.0,
         threshold: float = 0.5,
+        threshold_dataset_path: str | Path | None = None,
+        threshold_size: int = 100000,
         tolerance: float = 0.05,
     ):
         self.device = device
-        self.threshold = threshold
+        self.threshold = self._resolve_threshold(
+            threshold,
+            threshold_dataset_path,
+            threshold_size,
+        )
+        self.threshold_source = "dataset_cdf" if threshold_dataset_path else "explicit"
+        self.threshold_size = threshold_size
         self.tolerance = tolerance
         self.model = load_model(
             model_path=model_path,
             device=device,
             input_size=input_size,
             hidden_size=hidden_size,
+            steepness=steepness,
         )
         self.scaler = FeatureScaler.load(scaler_path) if scaler_path else None
         self.input_size = int(self.model.input_size)
@@ -107,6 +122,20 @@ class FlowClassifier:
                 "scaler feature count does not match model: "
                 f"scaler={len(self.scaler.x_min)}, model_input_size={self.input_size}"
             )
+
+    @staticmethod
+    def _resolve_threshold(
+        fallback_threshold: float,
+        threshold_dataset_path: str | Path | None,
+        threshold_size: int,
+    ) -> float:
+        if threshold_dataset_path is None:
+            return float(fallback_threshold)
+
+        threshold, _, _ = get_flow_stats(threshold_dataset_path, threshold_size)
+        if threshold is None:
+            raise ValueError(f"could not compute threshold from {threshold_dataset_path}")
+        return float(threshold)
 
     def classify(
         self,
@@ -125,13 +154,11 @@ class FlowClassifier:
 
         x_tensor = torch.tensor(model_input, dtype=torch.float32).unsqueeze(0).to(self.device)
         direction_tensor = torch.tensor([direction_idx], dtype=torch.long).to(self.device)
-        seq_len_tensor = torch.tensor([seq_len], dtype=torch.long).to(self.device)
 
         with torch.no_grad():
             score, exit_step = self.model(
                 x_tensor,
                 direction_tensor,
-                seq_len=seq_len_tensor,
                 enable_early_exit=True,
                 tolerance=self.tolerance,
             )
@@ -141,5 +168,6 @@ class FlowClassifier:
             "score": float(score),
             "predicted_label": label,
             "threshold": self.threshold,
+            "threshold_source": self.threshold_source,
             "exit_step": int(exit_step),
         }

@@ -7,6 +7,7 @@ __all__ = [
     "FeatureScaler",
     "FlowClassifier",
     "StepGruDatasetConfig",
+    "get_flow_stats",
     "load_model",
     "resolve_dataset_config",
 ]
@@ -17,6 +18,10 @@ def __getattr__(name: str):
         from .models import DynamicPacketGRU
 
         return DynamicPacketGRU
+    if name == "get_flow_stats":
+        from .models import get_flow_stats
+
+        return get_flow_stats
     if name in {"FlowClassifier", "load_model"}:
         from .inference import FlowClassifier, load_model
 

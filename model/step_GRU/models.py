@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import json
+import math
+from pathlib import Path
+
 import torch
 import torch.nn as nn
 
@@ -7,16 +11,17 @@ import torch.nn as nn
 class DynamicPacketGRU(nn.Module):
     """Packet sequence GRU used by the step_GRU notebooks and online worker."""
 
-    def __init__(self, input_size: int = 18, hidden_size: int = 64):
+    def __init__(self, input_size: int = 18, hidden_size: int = 64, steepness: float = 3.0):
         super().__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
+        self.steepness = float(steepness)
 
         self.direction_embedding = nn.Embedding(num_embeddings=2, embedding_dim=hidden_size)
         self.layer_norm = nn.LayerNorm(input_size)
         self.gru_cell = nn.GRUCell(input_size=input_size, hidden_size=hidden_size)
         self.classifier = nn.Linear(hidden_size, 1)
-        self.sigmoid = nn.Sigmoid()
+        self.activation = nn.Sigmoid()
 
     def _normalize_lengths(
         self,
@@ -80,7 +85,8 @@ class DynamicPacketGRU(nn.Module):
             active = (step < lengths).unsqueeze(-1)
             h_t = torch.where(active, next_h, h_t)
 
-            pred = self.sigmoid(self.classifier(h_t))
+            raw_logit = self.classifier(h_t)
+            pred = self.activation(self.steepness * raw_logit)
             all_outputs.append(pred)
 
             if enable_early_exit and step >= 1:
@@ -93,3 +99,69 @@ class DynamicPacketGRU(nn.Module):
             return all_outputs[-1].item(), actual_steps
 
         return torch.stack(all_outputs, dim=1)
+
+
+def get_flow_stats(
+    filename: str | Path,
+    target_flow_size: int = 100000,
+) -> tuple[float | None, list[float] | None, list[float] | None]:
+    """Return floored CDF threshold and feature mean/variance for a JSONL dataset."""
+    total_flow_count = 0
+    target_flow_count = 0
+    total_packet_count = 0
+    feature_sums: list[float] | None = None
+    feature_sq_sums: list[float] | None = None
+
+    try:
+        with Path(filename).open("r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+
+                item = json.loads(line)
+                if "flow_size_bytes" in item:
+                    total_flow_count += 1
+                    if item["flow_size_bytes"] <= target_flow_size:
+                        target_flow_count += 1
+
+                rows = item.get("x")
+                if not rows:
+                    continue
+                row_width = len(rows[0])
+                if row_width == 0 or any(len(row) != row_width for row in rows):
+                    continue
+
+                if feature_sums is None:
+                    feature_sums = [0.0] * row_width
+                    feature_sq_sums = [0.0] * row_width
+
+                if len(feature_sums) != row_width or feature_sq_sums is None:
+                    continue
+
+                for row in rows:
+                    total_packet_count += 1
+                    for index, value in enumerate(row):
+                        numeric_value = float(value)
+                        feature_sums[index] += numeric_value
+                        feature_sq_sums[index] += numeric_value * numeric_value
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None, None, None
+
+    if total_flow_count == 0:
+        return None, None, None
+
+    cdf_value = target_flow_count / total_flow_count
+    floored_cdf = math.floor(cdf_value * 100) / 100.0
+    if floored_cdf == 1:
+        floored_cdf = 0.98
+
+    if total_packet_count == 0 or feature_sums is None or feature_sq_sums is None:
+        return floored_cdf, None, None
+
+    feature_means = [value / total_packet_count for value in feature_sums]
+    feature_vars = [
+        max((sq_sum / total_packet_count) - (feature_means[index] ** 2), 0.0)
+        for index, sq_sum in enumerate(feature_sq_sums)
+    ]
+    return floored_cdf, feature_means, feature_vars

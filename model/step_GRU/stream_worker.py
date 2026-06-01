@@ -109,9 +109,12 @@ class StepGruStreamWorker:
         model_path: str,
         scaler_path: str | None = None,
         threshold: float = 0.5,
+        threshold_dataset_path: str | None = None,
+        threshold_size: int = 100000,
         tolerance: float = 0.05,
         input_size: int | None = None,
         hidden_size: int | None = None,
+        steepness: float = 3.0,
         device: str = "auto",
         result_log: str | None = None,
         idle_timeout_sec: float | None = None,
@@ -152,7 +155,10 @@ class StepGruStreamWorker:
             device=self.device,
             input_size=input_size,
             hidden_size=hidden_size,
+            steepness=steepness,
             threshold=threshold,
+            threshold_dataset_path=threshold_dataset_path,
+            threshold_size=threshold_size,
             tolerance=tolerance,
         )
         # result_log가 지정되면 Pub/Sub 발행과 별개로 JSON Lines 형식의 로컬 감사 로그를 남깁니다.
@@ -435,7 +441,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seq-len", type=int, choices=SEQUENCE_LENGTHS, default=10)
     parser.add_argument("--scaler-path")
     parser.add_argument("--threshold", type=float, default=0.5)
+    parser.add_argument(
+        "--threshold-dataset-path",
+        help="Compute the prediction threshold as the floored CDF of this dataset JSONL",
+    )
+    parser.add_argument(
+        "--threshold-size",
+        type=int,
+        default=100000,
+        help="Flow-size boundary in bytes used with --threshold-dataset-path",
+    )
     parser.add_argument("--tolerance", type=float, default=0.05)
+    parser.add_argument("--steepness", type=float, default=3.0)
     parser.add_argument("--input-size", type=int)
     parser.add_argument("--hidden-size", type=int)
     parser.add_argument("--device", default="auto")
@@ -466,6 +483,7 @@ def main() -> int:
     # 없으면 dataset 종류/방향/seq_len 조합으로 프로젝트 표준 weight 위치를 계산합니다.
     if args.model_path:
         model_path = require_existing_file(args.model_path, "model weights")
+        threshold_dataset_path = args.threshold_dataset_path
     else:
         dataset_config = resolve_dataset_config(
             dataset_type=args.dataset_type,
@@ -474,6 +492,10 @@ def main() -> int:
             root=args.dataset_root,
         )
         model_path = require_existing_file(dataset_config.weights_path, "model weights")
+        threshold_dataset_path = args.threshold_dataset_path
+
+    if threshold_dataset_path:
+        threshold_dataset_path = str(require_existing_file(threshold_dataset_path, "threshold dataset"))
 
     worker = StepGruStreamWorker(
         redis_url=args.redis_url,
@@ -484,9 +506,12 @@ def main() -> int:
         model_path=str(model_path),
         scaler_path=args.scaler_path,
         threshold=args.threshold,
+        threshold_dataset_path=threshold_dataset_path,
+        threshold_size=args.threshold_size,
         tolerance=args.tolerance,
         input_size=args.input_size,
         hidden_size=args.hidden_size,
+        steepness=args.steepness,
         device=args.device,
         result_log=args.result_log,
         idle_timeout_sec=args.idle_timeout_sec,

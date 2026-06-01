@@ -46,6 +46,7 @@ class StepGruRuntimeTest(unittest.TestCase):
 
             self.assertEqual(loaded.input_size, 18)
             self.assertEqual(loaded.hidden_size, 8)
+            self.assertEqual(loaded.steepness, 3.0)
 
             classifier = FlowClassifier(path, device=torch.device("cpu"), threshold=0.5)
             result = classifier.classify(
@@ -80,6 +81,61 @@ class StepGruRuntimeTest(unittest.TestCase):
         self.assertIsInstance(score, float)
         self.assertGreaterEqual(exit_step, 1)
         self.assertLessEqual(exit_step, 2)
+
+    def test_steepness_scales_classifier_logit(self):
+        from model.step_GRU.models import DynamicPacketGRU
+
+        model = DynamicPacketGRU(input_size=18, hidden_size=8, steepness=3.0)
+        x = torch.ones(1, 1, 18)
+        direction = torch.tensor([1], dtype=torch.long)
+
+        with torch.no_grad():
+            model.layer_norm.weight.fill_(1.0)
+            model.layer_norm.bias.zero_()
+            model.direction_embedding.weight.zero_()
+            model.gru_cell.weight_ih.zero_()
+            model.gru_cell.weight_hh.zero_()
+            model.gru_cell.bias_ih.zero_()
+            model.gru_cell.bias_hh.zero_()
+            model.classifier.weight.zero_()
+            model.classifier.bias.fill_(1.0)
+
+        output = model(x, direction)
+
+        self.assertAlmostEqual(output.item(), torch.sigmoid(torch.tensor(3.0)).item())
+
+    def test_flow_classifier_can_compute_threshold_from_dataset_cdf(self):
+        from model.step_GRU.inference import FlowClassifier
+        from model.step_GRU.models import DynamicPacketGRU
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            weights_path = tmp_path / "weights.pt"
+            dataset_path = tmp_path / "dataset.jsonl"
+            source_model = DynamicPacketGRU(input_size=18, hidden_size=8)
+            torch.save(source_model.state_dict(), weights_path)
+            dataset_path.write_text(
+                "\n".join(
+                    [
+                        '{"flow_size_bytes": 10, "x": [[1, 2]]}',
+                        '{"flow_size_bytes": 20, "x": [[3, 4]]}',
+                        '{"flow_size_bytes": 30, "x": [[5, 6]]}',
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            classifier = FlowClassifier(
+                weights_path,
+                device=torch.device("cpu"),
+                threshold=0.5,
+                threshold_dataset_path=dataset_path,
+                threshold_size=20,
+            )
+
+            self.assertEqual(classifier.threshold, 0.66)
+            self.assertEqual(classifier.threshold_source, "dataset_cdf")
 
 
 if __name__ == "__main__":
