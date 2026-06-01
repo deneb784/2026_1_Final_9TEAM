@@ -14,6 +14,7 @@ Mininet TrafficGenerator 트래픽을 XDP로 실시간 캡처하고, Redis Strea
 - Redis server / `redis-cli`
 - Python 3.12
 - PyTorch, redis-py
+- TrafficGenerator 로컬 checkout
 
 시스템 패키지 예시:
 
@@ -34,6 +35,39 @@ pip install -r requirements_redis.txt
 ```
 
 CUDA를 쓰려면 현재 환경의 GPU/CUDA에 맞는 PyTorch를 설치해야 합니다. CPU용 conda 예시는 `environment_capstone_gru.yml`에 있습니다.
+
+## TrafficGenerator 준비
+
+이 저장소는 외부 TrafficGenerator 코드를 포함하지 않습니다. 원본은 별도로 받아서
+repo root의 `TrafficGenerator/` 경로에 배치해야 합니다.
+
+```bash
+git clone https://github.com/HKUST-SING/TrafficGenerator.git TrafficGenerator
+```
+
+TrafficGenerator는 다음 논문에서 사용된 도구입니다.
+
+```text
+Enabling ECN in Multi-Service Multi-Queue Data Centers
+Wei Bai, Li Chen, Kai Chen, Haitao Wu
+USENIX NSDI 2016
+```
+
+이 프로젝트의 온라인 XDP/tshark 파이프라인은 logical flow를 복원하기 위해
+TrafficGenerator payload 앞부분의 metadata를 읽습니다. 따라서 원본 TrafficGenerator에
+capstone 실험용 local modification을 적용해야 합니다. 필요한 변경 요약은
+`docs/TRAFFIC_GENERATOR_MODIFICATIONS.md`를 참고하세요.
+
+수정 후 빌드:
+
+```bash
+cd TrafficGenerator
+make
+cd -
+```
+
+`main.py`는 실행 시 `TrafficGenerator/conf/src*_config.txt`를 생성하고
+`TrafficGenerator/bin/client`, `TrafficGenerator/bin/server`를 실행합니다.
 
 ## Conda 환경
 
@@ -350,8 +384,17 @@ pytest -q
 PYTHONPYCACHEPREFIX=/tmp/capstone_pycache pytest -q
 ```
 
+## 라이선스
+
+이 capstone 팀이 작성한 코드와 문서는 `LICENSE`에 명시된 MIT License를 따릅니다.
+
+`TrafficGenerator/` 디렉터리는 외부 third-party 코드에 capstone 실험용 수정이 더해진
+로컬 의존성입니다. 이 프로젝트는 TrafficGenerator 원본 코드를 포함하거나 재라이선스하지
+않습니다. 자세한 내용은 `THIRD_PARTY_NOTICES.md`와
+`docs/TRAFFIC_GENERATOR_MODIFICATIONS.md`를 참고하세요.
+
 ## 참고
 
 - 내부 구조/설계: `docs/OVERVIEW.md`
 - XDP/Redis 실시간 경로 구조 참고: `docs/REALTIME_PACKET_REDIS_PIPELINE.md`
-- TrafficGenerator 원본 설명: `TrafficGenerator/README.md`
+- TrafficGenerator 원본: https://github.com/HKUST-SING/TrafficGenerator

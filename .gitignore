@@ -21,3 +21,6 @@ redis_latency_validation_notion.md
 dataset/
 data/
 *.rdb
+
+# Third-party TrafficGenerator is required locally but is not vendored in this repo.
+TrafficGenerator/
