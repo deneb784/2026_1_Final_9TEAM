@@ -5,11 +5,17 @@ import json
 import math
 import numpy as np
 
+import torch
+import torch.nn as nn
+
 class DynamicPacketGRU(nn.Module):
-    def __init__(self, input_size=18, hidden_size=64): # 이전 데이터셋에 맞춰 input_size=18로 수정
+    def __init__(self, input_size=18, hidden_size=64, steepness=3.0): 
         super(DynamicPacketGRU, self).__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
+        
+        # [변경] 가파른 정도를 결정하는 파라미터 (1.0보다 클수록 0 또는 1에 더 빠르게 가까워짐)
+        self.steepness = steepness
         
         # 1. 방향 정보를 초기 은닉 상태(h_0)로 변환하는 임베딩 레이어
         self.direction_embedding = nn.Embedding(num_embeddings=2, embedding_dim=hidden_size)
@@ -22,7 +28,7 @@ class DynamicPacketGRU(nn.Module):
         
         # 4. 출력층 (0~1 확률값)
         self.classifier = nn.Linear(hidden_size, 1)
-        self.sigmoid = nn.Sigmoid()
+        self.activation = nn.Sigmoid()
 
     def forward(self, x, direction_idx, enable_early_exit=False, tolerance=0.05, max_packets=None):
         """
@@ -44,7 +50,9 @@ class DynamicPacketGRU(nn.Module):
             x_t = x[:, t, :] 
             h_t = self.gru_cell(x_t, h_t)
             
-            pred = self.sigmoid(self.classifier(h_t))
+            # [변경] 선형 결합의 결과물에 steepness를 곱해 시그모이드로 전달합니다.
+            raw_logit = self.classifier(h_t)
+            pred = self.activation(self.steepness * raw_logit)
             all_outputs.append(pred)
             
             # 조기 종료 로직
@@ -125,11 +133,12 @@ def get_flow_stats(filename, target_flow_size=100000):
     if total_flow_count == 0:
         return None, None, None
 
-    # --- 최종 연산 ---
 
     # 1. CDF 계산 (소수점 둘째 자리 내림)
     cdf_value = target_flow_count / total_flow_count
     floored_cdf = math.floor(cdf_value * 100) / 100.0
+    if floored_cdf == 1 :
+        floored_cdf = 0.98
     
     # 2. 평균 및 분산 계산
     feature_means = None
