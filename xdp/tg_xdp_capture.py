@@ -419,6 +419,15 @@ def parse_args() -> argparse.Namespace:
         default="dst_to_src",
         help="Redis Stream으로 보낼 ready flow 방향",
     )
+    parser.add_argument(
+        "--publish-mode",
+        choices=["queue", "inline"],
+        default="queue",
+        help=(
+            "ready flow Redis publish 방식. queue는 publisher thread로 분리하고, "
+            "inline은 perf callback 안에서 직접 XADD한다."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -469,9 +478,9 @@ def main() -> int:
         else None
     )
     result_subscriber = None
-    # perf callback 안에서 Redis XADD를 직접 수행하면 네트워크/Redis I/O 시간만큼
-    # 온라인 패킷 이벤트 처리가 막힌다. 그래서 callback은 request를 이 Queue에 넣기만 하고,
-    # 실제 Redis publish는 아래 publisher_loop thread가 담당한다.
+    # 기본(queue) 모드에서는 callback이 request를 Queue에 넣기만 하고, 실제 Redis publish는
+    # publisher_loop thread가 담당한다. inline 모드는 개선 전 구조와 비교하기 위한 실험용으로,
+    # perf callback 안에서 Redis XADD를 직접 수행한다.
     publish_queue: queue.Queue[tuple[dict, object] | object] = queue.Queue()
     publisher_stop = object()
     publisher_thread = None
@@ -642,13 +651,24 @@ def main() -> int:
                             "request_built_wall_ns": request_built_wall_ns,
                         }
                     )
-                    # 여기서 Redis publish를 직접 하지 않는다.
-                    # callback은 enqueue까지만 수행하고 바로 반환해야 다음 perf event를 빠르게 처리할 수 있다.
-                    # 실제 Redis XADD는 publisher_loop()가 Queue에서 꺼내 처리한다.
-                    request["producer_metrics"]["publish_enqueue_start_wall_ns"] = time.time_ns()
-                    request["producer_metrics"]["publish_enqueued_wall_ns"] = time.time_ns()
-                    publish_queue.put((request, entry))
-                    stats["publish_queued"] += 1
+                    if args.publish_mode == "inline":
+                        # 비교 실험용 개선 전 경로: callback 안에서 Redis XADD까지 직접 수행한다.
+                        # Redis I/O 동안 다음 perf event 처리가 지연될 수 있다.
+                        request["producer_metrics"]["publisher_dequeued_wall_ns"] = time.time_ns()
+                        stream_id = stream_producer.publish(request)
+                        stats["published"] += 1
+                        if args.print_ready:
+                            print(
+                                "[stream] id=%s stream=%s flow=%s publish_mode=inline"
+                                % (stream_id, args.redis_stream, request["logical_flow_id"])
+                            )
+                    else:
+                        # 개선 후 경로: callback은 enqueue까지만 수행하고 바로 반환한다.
+                        # 실제 Redis XADD는 publisher_loop()가 Queue에서 꺼내 처리한다.
+                        request["producer_metrics"]["publish_enqueue_start_wall_ns"] = time.time_ns()
+                        request["producer_metrics"]["publish_enqueued_wall_ns"] = time.time_ns()
+                        publish_queue.put((request, entry))
+                        stats["publish_queued"] += 1
                 except Exception as exc:
                     stats["publish_errors"] += 1
                     online_cache.flow_cache.set_status(entry, "default")
@@ -667,14 +687,15 @@ def main() -> int:
     )
     if stream_producer is not None:
         stream_producer.connect()
-        # Redis publish 전용 thread를 먼저 띄운 뒤 perf buffer callback을 계속 poll한다.
-        # daemon=True지만 finally에서 stop sentinel을 넣고 짧게 join한다.
-        publisher_thread = threading.Thread(
-            target=publisher_loop,
-            name="redis-stream-publisher",
-            daemon=True,
-        )
-        publisher_thread.start()
+        if args.publish_mode == "queue":
+            # Redis publish 전용 thread를 먼저 띄운 뒤 perf buffer callback을 계속 poll한다.
+            # daemon=True지만 finally에서 stop sentinel을 넣고 짧게 join한다.
+            publisher_thread = threading.Thread(
+                target=publisher_loop,
+                name="redis-stream-publisher",
+                daemon=True,
+            )
+            publisher_thread.start()
         result_subscriber = RedisResultSubscriber(
             redis_url=args.redis_url,
             channel_name=args.redis_response_channel,
@@ -682,8 +703,14 @@ def main() -> int:
         )
         result_subscriber.start_background()
         print(
-            "[*] Redis Stream publishing enabled (stream=%s, direction=%s, response_channel=%s)"
-            % (args.redis_stream, args.publish_direction, args.redis_response_channel)
+            "[*] Redis Stream publishing enabled "
+            "(stream=%s, direction=%s, response_channel=%s, publish_mode=%s)"
+            % (
+                args.redis_stream,
+                args.publish_direction,
+                args.redis_response_channel,
+                args.publish_mode,
+            )
         )
     print("[*] Press Ctrl-C to stop")
 
@@ -695,10 +722,10 @@ def main() -> int:
     finally:
         for ifname in interfaces:
             bpf.remove_xdp(ifname, flags)
-        if stream_producer is not None:
+        if stream_producer is not None and publisher_thread is not None:
             publish_queue.put(publisher_stop)
-            if publisher_thread is not None:
-                publisher_thread.join(timeout=2)
+            publisher_thread.join(timeout=2)
+        if stream_producer is not None:
             stream_producer.close()
         if result_subscriber is not None:
             result_subscriber.close()

@@ -133,6 +133,7 @@ class XdpPacketCapturer:
         redis_response_channel: str = "flow_results",
         classification_log: str | None = None,
         publish_direction: str = "dst_to_src",
+        publish_mode: str = "queue",
         project_root: str | None = None,
         startup_wait_sec: float = 3.0,
     ):
@@ -149,6 +150,7 @@ class XdpPacketCapturer:
         self.redis_response_channel = redis_response_channel
         self.classification_log = classification_log
         self.publish_direction = publish_direction
+        self.publish_mode = publish_mode
         self.project_root = project_root or PROJECT_ROOT
         self.startup_wait_sec = startup_wait_sec
         self.process: subprocess.Popen | None = None
@@ -190,6 +192,8 @@ class XdpPacketCapturer:
             str(self.server_port),
             "--publish-direction",
             self.publish_direction,
+            "--publish-mode",
+            self.publish_mode,
             "--print-ready",
         ]
         if self.run_id is not None:
@@ -244,6 +248,7 @@ class NodeXdpPacketCapturer:
         redis_response_channel: str = "flow_results",
         classification_log: str | None = None,
         publish_direction: str = "dst_to_src",
+        publish_mode: str = "queue",
         project_root: str | None = None,
         startup_wait_sec: float = 3.0,
     ):
@@ -260,6 +265,7 @@ class NodeXdpPacketCapturer:
         self.redis_response_channel = redis_response_channel
         self.classification_log = classification_log
         self.publish_direction = publish_direction
+        self.publish_mode = publish_mode
         self.project_root = project_root or PROJECT_ROOT
         self.startup_wait_sec = startup_wait_sec
         self.processes: list[subprocess.Popen] = []
@@ -299,6 +305,8 @@ class NodeXdpPacketCapturer:
                 str(self.server_port),
                 "--publish-direction",
                 self.publish_direction,
+                "--publish-mode",
+                self.publish_mode,
                 "--print-ready",
             ]
             if self.run_id is not None:

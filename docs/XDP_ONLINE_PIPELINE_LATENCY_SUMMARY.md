@@ -258,38 +258,6 @@ cache_update_margin_ms p50 = 989.646 ms
 
 분류된 VL2 flow 84개는 모두 FCT 전에 FlowCache update까지 완료됐다.
 
-## 발표용 결론
-
-기존 구조에서는 XDP callback 안에서 Redis publish까지 직렬로 수행하면서 request 생성 이후 worker 수신까지 p50 약 96 ms의 병목이 발생했다.
-
-이를 Queue 기반 publisher thread 구조로 분리한 결과, callback enqueue 비용은 p50 0.001 ms 수준으로 줄었고, FB 기준 전체 지연은 p50 약 22 ms까지 감소했다.
-
-VL2 workload에서는 worker 튜닝까지 적용한 뒤 feature-ready부터 FlowCache update까지 p50 1.1 ms, p99 4.7 ms를 달성했으며, 분류된 flow 84개 모두 FCT 전에 cache에 반영되었다.
-
-추가로 같은 online Redis/worker 경로에서 XDP와 tshark backend를 비교한 결과, Redis XADD 자체는 둘 다 sub-ms였지만 `last_packet_to_xadd_done`는 XDP p50 0.262 ms, tshark p50 145.996 ms로 크게 벌어졌다.
-
-따라서 본 시스템은 XDP 기반으로 packet-arrival 시점에 가까운 feature-ready trigger를 만들고, long-tailed workload에서 near-real-time online flow classification을 수행할 수 있음을 확인했다. capture backend 성능 비교에서는 E2E latency보다 `last_packet_to_xadd_done`가 XDP의 장점을 더 직접적으로 보여준다.
-
-## 발표에서 조심할 표현
-
-사용 가능한 표현:
-
-```text
-XDP 기반 실시간 온라인 플로우 분류 파이프라인
-near-real-time online flow classification prototype
-feature-ready 이후 p50 1.1 ms 내 FlowCache update
-VL2 기준 분류된 flow 100% FCT-before update
-XDP last-packet-to-XADD p50 0.262 ms
-```
-
-피하는 것이 좋은 표현:
-
-```text
-모든 workload에서 FCT 전에 항상 분류 완료
-hard real-time 보장
-line-rate 제어 완성
-FB short-flow까지 모두 same-flow control 가능
-E2E latency만으로 capture backend 성능을 단정
 ```
 
 ## 한 줄 요약

@@ -416,21 +416,5 @@ analyze/redis_stream_latency.py
 docs/XDP_ONLINE_PIPELINE_LATENCY_SUMMARY.md
 ```
 
-## 발표 준비용 핵심 파일
 
-발표 직전에 주로 보면 되는 파일:
-
-```text
-docs/XDP_ONLINE_PIPELINE_LATENCY_SUMMARY.md
-docs/PROJECT_FILE_GUIDE.md
-README.md
-analyze/online_e2e_latency.py
-analyze/redis_stream_latency.py
-analyze/online_fct_deadline.py
-runs/mininet_vl2_cuda_xdp_probe_20/results/online_classification_latency.jsonl
-runs/mininet_vl2_cuda_xdp_probe_20/results/online_e2e_latency_summary.json
-runs/mininet_vl2_cuda_xdp_probe_20/results/redis_stream_latency.csv
-runs/mininet_vl2_cuda_tshark_probe_20c/results/online_classification_latency.jsonl
-runs/mininet_vl2_cuda_tshark_probe_20c/results/online_e2e_latency_summary.json
-runs/mininet_vl2_cuda_tshark_probe_20c/results/redis_stream_latency.csv
 ```

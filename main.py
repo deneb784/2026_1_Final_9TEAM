@@ -88,6 +88,12 @@ def main():
     parser.add_argument('--cdf-file', default='DCTCP_CDF.txt')
     parser.add_argument('--capture-mode', choices=['pcap', 'tshark', 'xdp', 'xdp-verify', 'none'], default='tshark')
     parser.add_argument('--xdp-mode', choices=['skb', 'native', 'hw'], default='skb')
+    parser.add_argument(
+        '--xdp-publish-mode',
+        choices=['queue', 'inline'],
+        default='queue',
+        help='XDP ready flow publish mode: queue=current publisher thread, inline=callback direct XADD',
+    )
     parser.add_argument('--feature-packet-count', type=int, default=10)
     parser.add_argument('--redis-url', default=None)
     parser.add_argument('--redis-stream', default='flow_features')
@@ -250,6 +256,7 @@ def main():
                 redis_response_channel=args.redis_response_channel,
                 classification_log=classification_log,
                 publish_direction=args.publish_direction,
+                publish_mode=args.xdp_publish_mode,
             )
             if args.capture_mode == 'xdp-verify':
                 tshark_capturer = PacketCapturer(
