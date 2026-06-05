@@ -414,12 +414,13 @@ class StepGruStreamWorker:
                     self._append_result_log(response)
                     if not self.quiet_results:
                         print(
-                            "[result] stream_id=%s flow=%s score=%.4f label=%s"
+                            "[모델결과] 스트림ID=%s 플로우=%s 점수=%.4f 라벨=%s 추론시간_ms=%.3f\n"
                             % (
                                 stream_id,
                                 response["logical_flow_id"],
                                 response["score"],
                                 response["predicted_label"],
+                                response["inference_ms"],
                             ),
                             flush=True,
                         )

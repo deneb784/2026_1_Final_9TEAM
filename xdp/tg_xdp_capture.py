@@ -492,6 +492,7 @@ def main() -> int:
         if updated is None:
             return
         add_e2e_latency_fields(result, cache_apply_start_wall_ns, cache_updated_wall_ns)
+        result["flow_cache_updated"] = True
         updated.classification_result = dict(result)
         _append_jsonl(args.classification_log, result)
         with stats_lock:
@@ -499,22 +500,18 @@ def main() -> int:
         if args.print_ready:
             key = updated.key
             print(
-                "[classified] src=%s:%s dst=%s:%s flow_id=%s direction=%s label=%s score=%.4f e2e_ms=%s"
+                "[분류완료] 플로우ID=%s 점수=%.4f 라벨=%s 캐시업데이트시간_ms=%s 플로우업데이트=완료"
                 % (
-                    key.src_ip,
-                    key.src_port,
-                    key.dst_ip,
-                    key.dst_port,
                     key.flow_id,
-                    updated.direction,
-                    updated.status,
                     updated.model_score if updated.model_score is not None else -1.0,
+                    updated.status,
                     (
                         "%.3f" % result["ready_to_cache_updated_ms"]
                         if result.get("ready_to_cache_updated_ms") is not None
                         else "n/a"
                     ),
-                )
+                ),
+                flush=True,
             )
 
     def should_publish(entry) -> bool:
